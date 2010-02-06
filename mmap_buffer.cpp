@@ -48,13 +48,10 @@ MmapBuffer::MmapBuffer(const char *control_file, const char *data_file, unsigned
 	mmapped_ipc->max_offset = statbuf.st_size;
 	n_records = mmapped_ipc->max_offset / mmapped_ipc->record_size;
 
-	fprintf(stderr, "n_records=%d\n", n_records);
-
 
 	mmapped_shit = (char *)
 		mmap(0, mmapped_ipc->max_offset, PROT_READ | PROT_WRITE, MAP_SHARED, data_fd, 0);
 
-	fprintf(stderr, "I MMAPPED SOME SHIT CAN I WRITE TO IT?\n");
 	strcpy((char *)mmapped_shit, "Hello World!");
 
 	if (mmapped_shit == 0) {
@@ -68,28 +65,23 @@ int MmapBuffer::put(const void *data, int size) {
 	if (mmapped_ipc->current_offset > mmapped_ipc->max_offset) {
 		mmapped_ipc->current_offset = 0;
 	}
-	fprintf(stderr, "current_offset=%x\n", mmapped_ipc->current_offset);
-	fprintf(stderr, "data=%p\n", data);
 	memcpy((void *)(mmapped_shit + mmapped_ipc->current_offset), data, size);
 	return mmapped_ipc->current_timecode;
 }
 
 bool MmapBuffer::get(void *data, int size, int timecode) {
-	fprintf(stderr, "current_timecode=%d, n_records=%d, timecode=%d\n",
-		mmapped_ipc->current_timecode, n_records, timecode);
 	if (
 		mmapped_ipc->current_timecode < timecode 
 		|| mmapped_ipc->current_timecode - n_records > timecode 
 		|| mmapped_ipc->current_timecode == -1
 		|| timecode < 0
 	) {
-		fprintf(stderr, "FAIL WHALE\n");
 		return false;
 	}
 
 	long long offset = 
 		mmapped_ipc->current_offset 
-		- ((mmapped_ipc->current_timecode - timecode) 
+		- ((long long)(mmapped_ipc->current_timecode - timecode) 
 	 	    * mmapped_ipc->record_size);
 
 	if (offset < 0) {

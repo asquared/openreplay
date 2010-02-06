@@ -14,7 +14,7 @@ class MmapBuffer {
 	// mmap this thing into the control file so that we have shared data among all processes
 	volatile struct control_data {
 		int current_timecode;	
-		int current_offset;
+		long long current_offset;
 		int magic;
 		unsigned long long max_offset;
 		int record_size;

@@ -62,7 +62,21 @@ int main(int argc, char *argv[])
 	HRESULT	result;
 	const char *string;
 
-	buffer = new MmapBuffer("control1", "data1", 1<<20 /* put frames on 1meg markers */); 
+
+	if (argc < 6) {
+		fprintf(stderr, "usage: %s card control_file data_file timecode speed", argv[0]);
+		return 1;
+	}
+
+	cardIndex = atoi(argv[1]);
+
+	buffer = new MmapBuffer(argv[2], argv[3], 1<<20 /* put frames on 1meg markers */); 
+
+	int hours = 0, minutes = 0, seconds = 0, frames = 0;
+	sscanf(argv[4], "%d:%d:%d:%d", &hours, &minutes, &seconds, &frames);
+	timecode = (((hours * 60 + minutes) * 60 + seconds) * FRAMES_PER_SEC + frames);
+
+	frame_duration = (1000 / FRAMES_PER_SEC) / atof(argv[5]);
 	
 	if (!deckLinkIterator)
 	{
@@ -99,7 +113,6 @@ int main(int argc, char *argv[])
 	deckLinkOutput->EnableVideoOutput(bmdModeNTSC, bmdVideoOutputFlagDefault);
 	
 	// keep replaying until we run out of buffer or we get Ctrl-C'd...
-	timecode = 10;
 
 	// this is slightly ugly. it's 5am. i can be forgiven.
 	BMDTimeValue frame_start_time, time_now, time_in_frame, ticks_per_frame;
