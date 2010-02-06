@@ -7,6 +7,7 @@ class MmapBuffer {
 	// keyboard suckage, no destructor for now...
 	int put(const void *data, int size);
 	bool get(void *data, int size, int timecode);
+	int get_timecode(void);
 	
 	private:
 	volatile char *mmapped_shit;

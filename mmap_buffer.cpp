@@ -90,3 +90,7 @@ bool MmapBuffer::get(void *data, int size, int timecode) {
 	memcpy(data, (void *)(mmapped_shit+offset), size);
 	return true;
 }
+
+int MmapBuffer::get_timecode(void) {
+	return mmapped_ipc->current_timecode - 1;
+}
