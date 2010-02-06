@@ -1,0 +1,2 @@
+#!/bin/bash
+dd if=/dev/zero of=$1 bs=1 seek=$2 count=1

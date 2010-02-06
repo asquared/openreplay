@@ -1,6 +1,6 @@
 CC=g++
 SDK_PATH=../../include
-CFLAGS=-Wno-multichar -I $(SDK_PATH) -fno-rtti
+CFLAGS=-Wno-multichar -I $(SDK_PATH) -fno-rtti -g
 LDFLAGS=-lm -ldl -lpthread
 
 all: raw_ingest ingest output

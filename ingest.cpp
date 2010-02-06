@@ -73,7 +73,13 @@ int main(int argc, char *argv[])
 	HRESULT	result;
 	const char *string;
 
-	buffer = new MmapBuffer("control1", "data1", 1<<20 /* put frames on 1meg markers */, true); 
+	if (argc < 4) {
+		fprintf(stderr, "usage: %s card_index control_file data_file\n", argv[0]);
+		return 1;
+	}
+
+	cardIndex = atoi(argv[1]);
+	buffer = new MmapBuffer(argv[2], argv[3], 1<<20 /* put frames on 1meg markers */); 
 	
 	if (!deckLinkIterator)
 	{

@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdexcept>
+#include <curses.h>
 
 #include "DeckLinkAPI.h"
 #include "Capture.h"

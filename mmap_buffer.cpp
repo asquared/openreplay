@@ -62,7 +62,7 @@ MmapBuffer::MmapBuffer(const char *control_file, const char *data_file, unsigned
 int MmapBuffer::put(const void *data, int size) {
 	mmapped_ipc->current_timecode++;
 	mmapped_ipc->current_offset += mmapped_ipc->record_size;
-	if (mmapped_ipc->current_offset > mmapped_ipc->max_offset) {
+	if (mmapped_ipc->current_offset > mmapped_ipc->max_offset - mmapped_ipc->record_size) {
 		mmapped_ipc->current_offset = 0;
 	}
 	memcpy((void *)(mmapped_shit + mmapped_ipc->current_offset), data, size);

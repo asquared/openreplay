@@ -1,0 +1,4 @@
+#!/bin/sh
+
+dd if=/dev/zero of=$1 bs=64 count=1
+

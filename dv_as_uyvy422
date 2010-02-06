@@ -1,0 +1,2 @@
+dvconnect - | ffmpeg -i - -pix_fmt uyvy422 -f rawvideo -
+
