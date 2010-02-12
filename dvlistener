@@ -1,0 +1,2 @@
+nc -l -p 12345 | ffmpeg -i - -pix_fmt uyvy422 -f rawvideo -
+

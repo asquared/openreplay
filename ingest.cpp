@@ -26,7 +26,7 @@ HRESULT DeckLinkCaptureDelegate::VideoInputFrameArrived(IDeckLinkVideoInputFrame
 	{
 		if (videoFrame->GetFlags() & bmdFrameHasNoInputSource)
 		{
-			fprintf(stderr, "!!! NO SIGNAL !!!           \r");
+			fprintf(stderr, "!!! NO SIGNAL !!!           \n");
 		}
 		else
 		{
@@ -161,7 +161,7 @@ int main(int argc, char *argv[])
 	exitStatus = 0;
 	
 	// Block main thread until signal occurs
-	while (1);
+	while (1) { sleep(1); }
 	fprintf(stderr, "Stopping Capture\n");
 
 bail:

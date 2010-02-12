@@ -2,23 +2,24 @@
 #define _MMAP_BUFFER_H
 
 class MmapBuffer {
+<<<<<<< HEAD:mmap_buffer.h
     public:
     MmapBuffer(const char *control_file, const char *data_file, unsigned int record_size, bool reset = false);
     ~MmapBuffer( ); 
-
     int put(const void *data, int size);
     bool get(void *data, int size, int timecode);
+    int get_timecode(void);
     
     private:
     volatile char *mmapped_shit;
     
     // mmap this thing into the control file so that we have shared data among all processes
     volatile struct control_data {
-        int current_timecode;   
-        long long current_offset;
-        int magic;
-        unsigned long long max_offset;
-        int record_size;
+            int current_timecode;   
+            long long current_offset;
+            int magic;
+            unsigned long long max_offset;
+            int record_size;
     } *mmapped_ipc;
 
     int control_fd, data_fd;

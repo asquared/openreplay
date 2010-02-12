@@ -1,0 +1,4 @@
+#!/bin/sh
+
+preview_stream $1 $2 | mplayer -demuxer rawvideo -rawvideo ntsc:uyvy -
+

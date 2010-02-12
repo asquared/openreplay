@@ -8,7 +8,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdexcept>
-#include <curses.h>
 
 #include "DeckLinkAPI.h"
 #include "Capture.h"
@@ -125,7 +124,6 @@ int main(int argc, char *argv[])
 			deckLinkOutput->GetHardwareReferenceClock(1000, &time_now, &time_in_frame, &ticks_per_frame);
 			usleep(1000);
 		} while (time_now < frame_start_time + frame_duration);
-		fprintf(stderr, "outputting\n");
 	}
 bail:
    	

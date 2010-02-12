@@ -1,0 +1,82 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+my $FPS = 30;
+
+my $playout_command = $ENV{'REPLAY_PLAYOUT_CMD'};
+
+my $all_mark_args = join ' ', @ARGV;
+
+my @prev_replays;
+
+sub capture_replay {
+	chomp(my $timecode_out = `all_mark $all_mark_args`);
+	my @timecodes = split / /, $timecode_out;
+
+	print "Please input replay title.\n";
+	chomp(my $title = <STDIN>);
+	
+	push @prev_replays, {
+		title => $title,
+		timecodes => \@timecodes
+	}
+}
+
+
+sub playout_replay {
+	my $replay = shift;
+	my @timecodes = @{$replay->{timecodes}};
+
+	while (1) {
+		print "Please select your source. Then press ENTER for replay. Or Ctrl-C to exit.\n";
+		chomp(my $source = <STDIN>);
+		if ($source eq '') {
+			last;
+		}
+		$source -= 1;
+
+		print "Preroll (frames):\n";
+		chomp(my $time_shift = <STDIN>);
+
+		print "Speed (percent):\n";
+		chomp(my $speed = <STDIN>);
+
+		my $ctrl_file = $ARGV[$source * 2];
+		my $data_file = $ARGV[$source * 2 + 1];
+
+		my $timecode = $timecodes[$source] - $time_shift;
+
+		my $frames = $timecode % $FPS;
+		my $seconds = $timecode / $FPS;
+		my $minutes = $seconds / 60;
+		$seconds %= 60;
+		my $hours = $minutes / 60;
+		$minutes %= 60;
+
+		my $tc_str = sprintf "%02d:%02d:%02d:%02d", $hours, $minutes, $seconds, $frames;
+
+		system("$playout_command $ctrl_file $data_file $tc_str $speed");
+	}
+}
+
+while (1) {
+	my $i = 0;
+	for my $replay (@prev_replays) {
+		my $title = $replay->{title};
+		print "$i: $title\n";
+		$i++;
+	}
+	print "Or Press Enter to capture new replay.\n\n";
+	chomp(my $choice = <STDIN>);
+	if ($choice eq '') {
+		capture_replay( );
+	} else {
+		if ($choice <= $#prev_replays) {
+			playout_replay($prev_replays[$choice]);
+		} else {
+			print "Error.\n";
+		}
+	}
+}
