@@ -38,6 +38,8 @@ MmapBuffer::MmapBuffer(const char *control_file, const char *data_file, unsigned
         mmapped_ipc->record_size = record_size;
         mmapped_ipc->current_timecode = -1;
         mmapped_ipc->current_offset = 0;
+        // initialize the semaphore
+        sem_init((sem_t *)&mmapped_ipc->sem, 1, 1);
     }
 
     // now open the data file
@@ -67,11 +69,11 @@ MmapBuffer::MmapBuffer(const char *control_file, const char *data_file, unsigned
 // Clean up the memory mappings.
 MmapBuffer::~MmapBuffer( ) {
     if (0 != mmapped_shit) {
-        munmap(mmapped_shit, mmapped_ipc->max_offset);
+        munmap((void *)mmapped_shit, mmapped_ipc->max_offset);
     }
 
     if (0 != mmapped_ipc) {
-        munmap(mmapped_ipc, sizeof(struct control_data));
+        munmap((void *)mmapped_ipc, sizeof(struct control_data));
     }
 
     if (-1 != control_fd) {
@@ -84,22 +86,45 @@ MmapBuffer::~MmapBuffer( ) {
 }
 
 int MmapBuffer::put(const void *data, int size) {
-    mmapped_ipc->current_timecode++;
-    mmapped_ipc->current_offset += mmapped_ipc->record_size;
-    if (mmapped_ipc->current_offset > mmapped_ipc->max_offset - mmapped_ipc->record_size) {
-        mmapped_ipc->current_offset = 0;
+    int save_timecode = mmapped_ipc->current_timecode;
+    long long save_offset = mmapped_ipc->current_offset;
+
+    save_timecode++;
+    save_offset += mmapped_ipc->record_size;
+    if (save_offset > mmapped_ipc->max_offset - mmapped_ipc->record_size) {
+        save_offset = 0;
     }
-    memcpy((void *)(mmapped_shit + mmapped_ipc->current_offset), data, size);
+
+    *(int *)(mmapped_shit + save_offset) = size;
+    memcpy((void *)(mmapped_shit + save_offset + sizeof(int)), data, size);
+
+    if (sem_wait((sem_t *)&mmapped_ipc->sem) < 0) {
+        perror("Locking semaphore");
+    }
+    mmapped_ipc->current_offset = save_offset;
+    mmapped_ipc->current_timecode = save_timecode;
+    if (sem_post((sem_t *)&mmapped_ipc->sem) < 0) {
+        perror("Unlocking semaphore");
+    }
     return mmapped_ipc->current_timecode;
 }
 
-bool MmapBuffer::get(void *data, int size, int timecode) {
+bool MmapBuffer::get(void *data, int *size, int timecode) {
+    int actual_size; 
+    
+    if (sem_wait((sem_t *)&mmapped_ipc->sem) < 0) {
+        perror("Locking semaphore");
+    }
+
     if (
         mmapped_ipc->current_timecode < timecode 
         || mmapped_ipc->current_timecode - n_records > timecode 
         || mmapped_ipc->current_timecode == -1
         || timecode < 0
     ) {
+        if (sem_post((sem_t *)&mmapped_ipc->sem) < 0) {
+            perror("Unlocking semaphore");
+        }
         return false;
     }
 
@@ -111,10 +136,21 @@ bool MmapBuffer::get(void *data, int size, int timecode) {
     if (offset < 0) {
         offset += n_records * mmapped_ipc->record_size;
     }       
-    memcpy(data, (void *)(mmapped_shit+offset), size);
+
+    actual_size = *(int *)(mmapped_shit + offset);
+
+    if (actual_size < *size) {
+        *size = actual_size;
+    }
+
+    if (sem_post((sem_t *)&mmapped_ipc->sem) < 0) {
+        perror("Unlocking semaphore");
+    }
+
+    memcpy(data, (void *)(mmapped_shit+offset + sizeof(int)), *size);
     return true;
 }
 
 int MmapBuffer::get_timecode(void) {
-	return mmapped_ipc->current_timecode - 1;
+    return mmapped_ipc->current_timecode - 1;
 }

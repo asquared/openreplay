@@ -1,13 +1,14 @@
 #ifndef _MMAP_BUFFER_H
 #define _MMAP_BUFFER_H
 
+#include <semaphore.h>
+
 class MmapBuffer {
-<<<<<<< HEAD:mmap_buffer.h
     public:
     MmapBuffer(const char *control_file, const char *data_file, unsigned int record_size, bool reset = false);
     ~MmapBuffer( ); 
     int put(const void *data, int size);
-    bool get(void *data, int size, int timecode);
+    bool get(void *data, int *size, int timecode);
     int get_timecode(void);
     
     private:
@@ -20,6 +21,7 @@ class MmapBuffer {
             int magic;
             unsigned long long max_offset;
             int record_size;
+            sem_t sem;
     } *mmapped_ipc;
 
     int control_fd, data_fd;
