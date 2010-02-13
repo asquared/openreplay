@@ -28,6 +28,9 @@ int *marks, *replay_ptrs, *replay_ends;
 
 // Preroll frames from mark
 int preroll = 300, postroll = 300;
+int qreplay_speed = 10;
+int qreplay_cam = 0;
+int playout_pid = -1;
 
 // Preview frames per frame
 #define PVW_FPF 3
@@ -166,6 +169,7 @@ int log_clips(void) {
     int child = fork( );
     int j, tc, size = sizeof(frame), dropped;
     int fd;
+
     char fmt_buf[256];
     if (child < 0) {
         fprintf(stderr, "Fork failed in log_clips\n");
@@ -175,7 +179,7 @@ int log_clips(void) {
             snprintf(fmt_buf, sizeof(fmt_buf) - 1, "replay%03d_feed%02d.mjpg", clip_no, j);
             fmt_buf[sizeof(fmt_buf) - 1] = 0; 
 
-            fd = open(fmt_buf, O_CREAT | O_TRUNC | O_WRONLY);
+            fd = open(fmt_buf, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
             tc = marks[j] - preroll;
             dropped = 0;
@@ -195,12 +199,37 @@ int log_clips(void) {
     }
 }
 
+void quick_playout(int clip) {
+    if (playout_pid != -1) {
+       kill(playout_pid, SIGKILL); 
+    }
+
+    int child = fork( );
+    char name[256], speed[256];
+    snprintf(name, sizeof(name) - 1, "replay%03d_feed%02d.mjpg", clip, qreplay_cam);
+    name[sizeof(name) - 1] = 0;
+    snprintf(speed, sizeof(speed) - 1, "%f", qreplay_speed / 10.0f);
+    speed[sizeof(speed) - 1] = 0;
+
+    if (child < 0) {
+        perror("quick_playout fork");
+    } else if (child == 0) {
+        execl("/home/rpitv/bin/playout.sh", "/home/rpitv/bin/playout.sh", name, speed, (char *)NULL);
+	perror("quick_playout execl");
+	exit(1);
+    } else {
+        playout_pid = child;
+    }
+}
+
 int main(int argc, char *argv[])
 {
 	int frameCount;
         int x, y, j, k;
         int last_logged = -1;
         TTF_Font *font;
+        int flag = 0;
+        int playout_clip = 0;
 
         SDL_Event evt;
 
@@ -234,7 +263,7 @@ int main(int argc, char *argv[])
             fprintf(stderr, "Failed to initialize SDL!\n");
         }
 
-        screen = SDL_SetVideoMode(720*3, 480*2, 24, SDL_HWSURFACE | SDL_DOUBLEBUF);
+        screen = SDL_SetVideoMode(720*2, 480*2, 24, SDL_HWSURFACE | SDL_DOUBLEBUF);
         if (!screen) {
             fprintf(stderr, "Failed to set video mode!\n");
             goto dead;
@@ -246,7 +275,7 @@ int main(int argc, char *argv[])
             goto dead;
         }
 
-        for (;;) {
+        while (!flag) {
             // Video Output
             SDL_FillRect(screen, 0, 0);
             x = 0;
@@ -282,8 +311,12 @@ int main(int argc, char *argv[])
             }
 
             //line_of_text(font, &x, &y, "");
-            line_of_text(font, &x, &y, "PREROLL:  %s", timecode_fmt(preroll));
-            line_of_text(font, &x, &y, "POSTROLL: %s", timecode_fmt(postroll));
+            line_of_text(font, &x, &y, "MARK: %s", timecode_fmt(marks[0]));
+            line_of_text(font, &x, &y, "PREROLL:  %s [+qw-]", timecode_fmt(preroll));
+            line_of_text(font, &x, &y, "POSTROLL: %s [+as-]", timecode_fmt(postroll));
+            line_of_text(font, &x, &y, "PLAYOUT SPEED: %d [+zx-]", qreplay_speed);
+            line_of_text(font, &x, &y, "PLAYOUT CLIP: %d [+cv-]", playout_clip);
+            line_of_text(font, &x, &y, "PLAYOUT SOURCE: %d [12]", qreplay_cam + 1);
             if (last_logged != -1) {
                 line_of_text(font, &x, &y, "LOGGED CLIP: %d", last_logged);
             }
@@ -320,9 +353,49 @@ int main(int argc, char *argv[])
                                 postroll = 0;
                             }
                             break;
+                        case SDLK_z:
+                            qreplay_speed++;
+                            break;
+                        case SDLK_x:
+                            qreplay_speed--;
+                            if (qreplay_speed < 0) {
+                                qreplay_speed = 0;
+                            }
+                            break;
+                        case SDLK_c:
+                            playout_clip++;
+                            if (playout_clip > last_logged) {
+                                playout_clip = last_logged;
+                            }
+                            break;
+                        case SDLK_v:
+                            playout_clip--;
+                            if (playout_clip < 0) {
+                                playout_clip = 0;
+                            }
+                            break;
                         case SDLK_RETURN:
                             last_logged = log_clips( );
                             break;
+                        case SDLK_SPACE:
+                            quick_playout(last_logged);
+                            break;
+                        case SDLK_BACKSPACE:
+                            quick_playout(playout_clip);
+                            break;
+
+                        case SDLK_1:
+			    qreplay_cam = 0;
+                            break;
+
+                        case SDLK_2:
+			    qreplay_cam = 1;
+                            break;
+
+                        case SDLK_ESCAPE:
+			    flag = 1;
+                            break;
+			
                     }
                 } 
             }
