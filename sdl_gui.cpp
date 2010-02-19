@@ -3,7 +3,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <memory.h>
-#include <jpeglib.h>
 #include <signal.h>
 
 #include "SDL.h"
@@ -35,42 +34,8 @@ int playout_pid = -1;
 // Preview frames per frame
 #define PVW_FPF 3
 
-struct jpeg_decompress_struct jdecomp;
-struct jpeg_error_mgr jerror;
-
-void libjpeg_init(void) {
-    jdecomp.err = jpeg_std_error(&jerror);
-    jpeg_create_decompress(&jdecomp);
-}
 
 enum { PREVIEW, LIVE } display_mode;
-
-#if COCAINE
-    if (SDL_MUSTLOCK(frame_buf)) {
-        SDL_LockSurface(frame_buf);
-    }
-
-    pixels = (unsigned char *)frame_buf->pixels;
-    stride = 720*3;
-
-
-    // JPEG decoding leetnees here
-    // ohmygodcocaine... can IJG please write better documentation?
-    jpeg_mem_src(&jdecomp, (JOCTET *)buf, size, 0, 0);
-    jpeg_read_header(&jdecomp, TRUE);
-    jpeg_start_decompress(&jdecomp);
-    
-    while (jdecomp.output_scanline < jdecomp.output_height && jdecomp.output_scanline < frame_buf->h) {
-        // cocaine... we're relying on SDL using the same pixel format as JPEG.
-        jpeg_read_scanlines(&jdecomp, (JSAMPLE **)(pixels + jdecomp.output_scanline * stride), 1);
-    }
-
-    jpeg_finish_decompress(&jdecomp);
-
-    if (SDL_MUSTLOCK(frame_buf)) {
-        SDL_UnlockSurface(frame_buf);
-    }
-#endif
 
 void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
     SDL_Rect rect;
@@ -230,12 +195,12 @@ int main(int argc, char *argv[])
         TTF_Font *font;
         int flag = 0;
         int playout_clip = 0;
+        int input = 0;
 
         SDL_Event evt;
 
         signal(SIGCHLD, SIG_IGN); // we don't care about our children...
 
-        libjpeg_init( );
         TTF_Init( );
         font = TTF_OpenFont("Consolas.ttf", 24);
 
@@ -275,6 +240,8 @@ int main(int argc, char *argv[])
             goto dead;
         }
 
+        SDL_EnableUNICODE(1);
+
         while (!flag) {
             // Video Output
             SDL_FillRect(screen, 0, 0);
@@ -311,12 +278,17 @@ int main(int argc, char *argv[])
             }
 
             //line_of_text(font, &x, &y, "");
+            if (input > 0) {
+                line_of_text(font, &x, &y, "%d ", input);
+            } else {
+                line_of_text(font, &x, &y, " ");
+            }
             line_of_text(font, &x, &y, "MARK: %s", timecode_fmt(marks[0]));
-            line_of_text(font, &x, &y, "PREROLL:  %s [+qw-]", timecode_fmt(preroll));
-            line_of_text(font, &x, &y, "POSTROLL: %s [+as-]", timecode_fmt(postroll));
-            line_of_text(font, &x, &y, "PLAYOUT SPEED: %d [+zx-]", qreplay_speed);
-            line_of_text(font, &x, &y, "PLAYOUT CLIP: %d [+cv-]", playout_clip);
-            line_of_text(font, &x, &y, "PLAYOUT SOURCE: %d [12]", qreplay_cam + 1);
+            line_of_text(font, &x, &y, "PREROLL:  %s [+qw-, e]", timecode_fmt(preroll));
+            line_of_text(font, &x, &y, "POSTROLL: %s [+as-, d]", timecode_fmt(postroll));
+            line_of_text(font, &x, &y, "PLAYOUT SPEED: %d [+zx-, +/*-, c]", qreplay_speed);
+            line_of_text(font, &x, &y, "PLAYOUT CLIP: %d [keypad .]", playout_clip);
+            line_of_text(font, &x, &y, "PLAYOUT SOURCE: %d [0..9, PgUp]", qreplay_cam + 1);
             if (last_logged != -1) {
                 line_of_text(font, &x, &y, "LOGGED CLIP: %d", last_logged);
             }
@@ -326,8 +298,23 @@ int main(int argc, char *argv[])
             if (SDL_PollEvent(&evt)) {
                 if (evt.type == SDL_KEYDOWN) {
                     switch (evt.key.keysym.sym) {
+                        case SDLK_KP0:
+                        case SDLK_KP1:
+                        case SDLK_KP2:
+                        case SDLK_KP3:
+                        case SDLK_KP4:
+                        case SDLK_KP5:
+                        case SDLK_KP6:
+                        case SDLK_KP7:
+                        case SDLK_KP8:
+                        case SDLK_KP9:
+                            input *= 10;
+                            input += (evt.key.keysym.unicode - L'0');
+                            break;
                         case SDLK_m:
+                        case SDLK_KP_PLUS:
                             mark( );
+                            last_logged = log_clips( );
                             break;
                         case SDLK_p:
                             preview( );
@@ -344,6 +331,11 @@ int main(int argc, char *argv[])
                                 preroll = 0;
                             }
                             break;
+                        case SDLK_e:
+                            preroll = input;
+                            input = 0;
+                            break;
+
                         case SDLK_a:
                             postroll += 5;
                             break;
@@ -353,43 +345,63 @@ int main(int argc, char *argv[])
                                 postroll = 0;
                             }
                             break;
+                        case SDLK_d:
+                            postroll = input;
+                            input = 0;
+                            break;
+
                         case SDLK_z:
+                        case SDLK_KP_DIVIDE:
                             qreplay_speed++;
                             break;
                         case SDLK_x:
+                        case SDLK_KP_MULTIPLY:
                             qreplay_speed--;
                             if (qreplay_speed < 0) {
                                 qreplay_speed = 0;
                             }
                             break;
                         case SDLK_c:
-                            playout_clip++;
-                            if (playout_clip > last_logged) {
-                                playout_clip = last_logged;
+                            qreplay_speed = input;
+                            break;
+
+                        case SDLK_KP_PERIOD:
+                            if (input <= last_logged) {
+                                playout_clip = input;
                             }
+                            input = 0;
                             break;
-                        case SDLK_v:
-                            playout_clip--;
-                            if (playout_clip < 0) {
-                                playout_clip = 0;
-                            }
-                            break;
-                        case SDLK_RETURN:
-                            last_logged = log_clips( );
-                            break;
+
                         case SDLK_SPACE:
+                        case SDLK_KP_ENTER:
                             quick_playout(last_logged);
                             break;
+
                         case SDLK_BACKSPACE:
+                        case SDLK_KP_MINUS:
                             quick_playout(playout_clip);
                             break;
 
-                        case SDLK_1:
-			    qreplay_cam = 0;
+                        case SDLK_PAGEUP:
+                            if (input > 0 && input - 1 < n_buffers) {
+                                qreplay_cam = input - 1; 
+                            }
+                            input = 0;
                             break;
 
+                        case SDLK_1:
                         case SDLK_2:
-			    qreplay_cam = 1;
+                        case SDLK_3:
+                        case SDLK_4:
+                        case SDLK_5:
+                        case SDLK_6:
+                        case SDLK_7:
+                        case SDLK_8:
+                        case SDLK_9:
+                            qreplay_cam = (evt.key.keysym.unicode - L'0' - 1);
+                            if (qreplay_cam >= n_buffers) {
+                                qreplay_cam = n_buffers - 1;
+                            }
                             break;
 
                         case SDLK_ESCAPE:
