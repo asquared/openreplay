@@ -196,6 +196,7 @@ int main(int argc, char *argv[])
         int flag = 0;
         int playout_clip = 0;
         int input = 0;
+        int waiting_postroll, postroll_left;
 
         SDL_Event evt;
 
@@ -228,7 +229,7 @@ int main(int argc, char *argv[])
             fprintf(stderr, "Failed to initialize SDL!\n");
         }
 
-        screen = SDL_SetVideoMode(720*2, 480*2, 24, SDL_HWSURFACE | SDL_DOUBLEBUF);
+        screen = SDL_SetVideoMode(1920, 480*2, 24, SDL_HWSURFACE | SDL_DOUBLEBUF);
         if (!screen) {
             fprintf(stderr, "Failed to set video mode!\n");
             goto dead;
@@ -243,6 +244,16 @@ int main(int argc, char *argv[])
         SDL_EnableUNICODE(1);
 
         while (!flag) {
+            // Await postroll
+            if (waiting_postroll) {
+                if (buffers[0]->get_timecode( ) > marks[0] + postroll) {
+                    last_logged = log_clips( );
+                    waiting_postroll = 0;
+                } else {
+                    postroll_left = marks[0] + postroll - buffers[0]->get_timecode( );
+                }
+            }
+
             // Video Output
             SDL_FillRect(screen, 0, 0);
             x = 0;
@@ -266,8 +277,8 @@ int main(int argc, char *argv[])
             }
 
             // x, y points at the top left of the next free square
-            x += 10;
-            y += 10;
+            x = 720*2 + 10;
+            y = 10;
 
             if (display_mode == LIVE) {
                 line_of_text(font, &x, &y, "LIVE PREVIEW");
@@ -289,7 +300,10 @@ int main(int argc, char *argv[])
             line_of_text(font, &x, &y, "PLAYOUT SPEED: %d [+zx-, +/*-, c]", qreplay_speed);
             line_of_text(font, &x, &y, "PLAYOUT CLIP: %d [keypad .]", playout_clip);
             line_of_text(font, &x, &y, "PLAYOUT SOURCE: %d [0..9, PgUp]", qreplay_cam + 1);
-            if (last_logged != -1) {
+            if (waiting_postroll) {
+                line_of_text(font, &x, &y, "AWAITING POSTROLL: %s", timecode_fmt(postroll_left));
+                line_of_text(font, &x, &y, "** DEL TO LOG NOW **", timecode_fmt(postroll_left));
+            } else if (last_logged != -1) {
                 line_of_text(font, &x, &y, "LOGGED CLIP: %d", last_logged);
             }
 
@@ -314,14 +328,27 @@ int main(int argc, char *argv[])
                         case SDLK_m:
                         case SDLK_KP_PLUS:
                             mark( );
-                            last_logged = log_clips( );
+                            waiting_postroll = 1;
                             break;
+
+                        case SDLK_DELETE:
+                            last_logged = log_clips( );
+                            waiting_postroll = 0;
+                            break;
+
+                        case SDLK_END:
+                            system("killall bmdplayout");
+                            break;
+
+                        case SDLK_INSERT:
                         case SDLK_p:
                             preview( );
                             break;
+                        case SDLK_HOME:
                         case SDLK_l:
                             return_to_live( );
                             break;
+
                         case SDLK_q:
                             preroll += 5;
                             break;
