@@ -317,10 +317,19 @@ protected:
 lavc_decoder *open_files[MAX_OPEN_FILES] = {0};
 
 int socket_fd;
+struct sockaddr_in timecode_addr;
+
 int playout_source = 0;
+int timecode = 0;
 bool did_cut = false;
 bool paused = false;
 bool step = false;
+
+// send timecode update on UDP socket
+void update_timecode(void) {
+    sendto(socket_fd, &timecode, sizeof(timecode), 0, 
+        (struct sockaddr *)&timecode_addr, sizeof(timecode_addr));
+}
 
 void socket_setup(void) {
     struct sockaddr_in addr;
@@ -328,6 +337,10 @@ void socket_setup(void) {
     addr.sin_family = AF_INET;
     addr.sin_port = htons(30001);
     inet_aton("127.0.0.1", &addr.sin_addr);
+
+    timecode_addr.sin_family = AF_INET;
+    timecode_addr.sin_port = htons(30002);
+    inet_aton("127.0.0.1", &timecode_addr.sin_addr);
 
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd == -1) {
@@ -385,12 +398,14 @@ void parse_command(struct playout_command *cmd) {
             open_new_files(cmd->filenames);
             playout_source = cmd->source;
             did_cut = true;
+            timecode = 0;
             break;
         case PLAYOUT_CMD_CUT_REWIND:
             // rewind all the sources
             for (int j = 0; j < MAX_OPEN_FILES && open_files[j]; ++j) {
                 open_files[j]->rewind( );
             }
+            timecode = 0;
             // fall through to the cut...
         case PLAYOUT_CMD_CUT:
             playout_source = cmd->source;
@@ -429,6 +444,7 @@ decode_status advance_all_and_read_from(int source) {
 int main(int argc, char *argv[]) {
     struct playout_command cmd;
     unsigned char *buf = (unsigned char *)malloc(2*720*480);
+    bool next_frame_ready = false;
     decode_status result;
     StdoutOutput out;
 
@@ -441,20 +457,27 @@ int main(int argc, char *argv[]) {
 
     // now, the interesting bits...
     while (1) {
-        if (out.ReadyForNextFrame( ) || did_cut) {
+        if (!next_frame_ready) {
             // Advance all streams one frame. Only decode on the one we care about.
             // (if nothing's open, this fails by design...)
             if (!paused || step || did_cut) {
                 result = advance_all_and_read_from(playout_source);
                 if (result == SUCCESS) {
                     open_files[playout_source]->copy_frame(out.GetFrameBuffer( ), 720, 480); 
-                    out.Flip( );
+                    next_frame_ready = true;
                 }
-
                 step = false;
+                did_cut = false;
+
+                ++timecode;
+                update_timecode( );
+
             }
 
-            did_cut = false;
+        }
+
+        /* else */ if (out.ReadyForNextFrame( ) && next_frame_ready) {
+            out.Flip( );
         } 
         
         if (try_receive(&cmd)) {
