@@ -78,7 +78,7 @@ void preview(void) {
     int j;
     for (j = 0; j < n_buffers; ++j) {
         replay_ptrs[j] = marks[j] - preroll;
-        replay_ends[j] = marks[j];
+        replay_ends[j] = marks[j] + postroll;
     }
 
     display_mode = PREVIEW;
@@ -407,6 +407,7 @@ int main(int argc, char *argv[])
                             break;
                         case SDLK_c:
                             qreplay_speed = input;
+                            input = 0;
                             break;
 
                         case SDLK_KP_PERIOD:
