@@ -5,6 +5,10 @@
 #include <memory.h>
 #include <signal.h>
 
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #include "SDL.h"
 #include "SDL_image.h"
 #include "SDL_rwops.h"
@@ -12,7 +16,7 @@
 
 #include "mmap_buffer.h"
 #include "mjpeg_config.h"
-
+#include "playout_ctl.h"
 
 SDL_Surface *screen, *frame_buf;
 
@@ -36,6 +40,9 @@ int playout_pid = -1;
 
 
 enum { PREVIEW, LIVE } display_mode;
+
+int socket_fd;
+struct sockaddr_in daemon_addr;
 
 void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
     SDL_Rect rect;
@@ -165,36 +172,79 @@ int log_clips(void) {
 }
 
 void quick_playout(int clip) {
-    if (playout_pid != -1) {
-       kill(playout_pid, SIGKILL); 
+    int j;
+
+    struct playout_command cmd;
+    cmd.source = qreplay_cam;
+    cmd.cmd = PLAYOUT_CMD_START_FILES;
+    
+    int n_left = sizeof(cmd.filenames) - 2;
+    int n_written;
+
+    cmd.filenames[ sizeof(cmd.filenames) - 1 ] = 0;
+    cmd.filenames[ sizeof(cmd.filenames) - 2 ] = 0;
+
+    char *ptr = cmd.filenames;
+
+    for (j = 0; j < n_buffers; ++j) {
+        n_written = snprintf(ptr, n_left, "replay%03d_feed%02d.mjpg", clip, j);
+        if (n_written > n_left) {
+            n_written = n_left;
+        }
+
+        n_left -= n_written;
+        ptr += n_written;
+
+        ptr[0] = '\0';
+        ptr++;
+        n_left--;
     }
 
-    int child = fork( );
-    char name[256], speed[256];
-    snprintf(name, sizeof(name) - 1, "replay%03d_feed%02d.mjpg", clip, qreplay_cam);
-    name[sizeof(name) - 1] = 0;
-    snprintf(speed, sizeof(speed) - 1, "%f", qreplay_speed / 10.0f);
-    speed[sizeof(speed) - 1] = 0;
+    ptr[0] = '\0';
 
-    if (child < 0) {
-        perror("quick_playout fork");
-    } else if (child == 0) {
-        execl("/home/rpitv/bin/playout.sh", "/home/rpitv/bin/playout.sh", name, speed, (char *)NULL);
-	perror("quick_playout execl");
-	exit(1);
-    } else {
-        playout_pid = child;
-    }
+    // ready to go... so do it.
+    sendto(socket_fd, &cmd, sizeof(cmd), 0, (struct sockaddr *)&daemon_addr, sizeof(daemon_addr));
 }
 
-int socket_fd;
-struct sockaddr_in daemon_addr;
+void live_cut(int new_source) {
+    struct playout_command cmd;
+    cmd.cmd = PLAYOUT_CMD_CUT;
+    cmd.source = new_source;
+
+    sendto(socket_fd, &cmd, sizeof(cmd), 0, (struct sockaddr *)&daemon_addr, sizeof(daemon_addr));
+}
+
+void live_cut_and_rewind(int new_source) {
+    struct playout_command cmd;
+    cmd.cmd = PLAYOUT_CMD_CUT_REWIND;
+    cmd.source = new_source;
+
+    sendto(socket_fd, &cmd, sizeof(cmd), 0, (struct sockaddr *)&daemon_addr, sizeof(daemon_addr));
+}
+
+void adjust_speed(float new_speed) {
+    struct playout_command cmd;
+    cmd.cmd = PLAYOUT_CMD_ADJUST_SPEED;
+    cmd.new_speed = new_speed;
+
+    sendto(socket_fd, &cmd, sizeof(cmd), 0, (struct sockaddr *)&daemon_addr, sizeof(daemon_addr));
+    
+}
+
+void do_playout_cmd(int cmd_id) {
+    struct playout_command cmd;
+    cmd.cmd = cmd_id;
+
+    sendto(socket_fd, &cmd, sizeof(cmd), 0, (struct sockaddr *)&daemon_addr, sizeof(daemon_addr));
+}
+
 
 void socket_setup(void) {
-    memset(&addr, 0, sizeof(daemon_addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(30001);
-    inet_aton("127.0.0.1", &addr.sin_addr);
+    // set this to the address of the listening daemon
+    memset(&daemon_addr, 0, sizeof(daemon_addr));
+    daemon_addr.sin_family = AF_INET;
+    daemon_addr.sin_port = htons(30001);
+    inet_aton("127.0.0.1", &daemon_addr.sin_addr);
 
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd == -1) {
@@ -216,6 +266,8 @@ int main(int argc, char *argv[])
         int waiting_postroll, postroll_left;
 
         SDL_Event evt;
+
+        socket_setup( );
 
         signal(SIGCHLD, SIG_IGN); // we don't care about our children...
 
@@ -397,6 +449,9 @@ int main(int argc, char *argv[])
                         case SDLK_z:
                         case SDLK_KP_DIVIDE:
                             qreplay_speed++;
+                            if (evt.key.keysym.mod & KMOD_CTRL) {
+                                adjust_speed(qreplay_speed/10.0f);
+                            }
                             break;
                         case SDLK_x:
                         case SDLK_KP_MULTIPLY:
@@ -404,10 +459,16 @@ int main(int argc, char *argv[])
                             if (qreplay_speed < 0) {
                                 qreplay_speed = 0;
                             }
+                            if (evt.key.keysym.mod & KMOD_CTRL) {
+                                adjust_speed(qreplay_speed/10.0f);
+                            }
                             break;
                         case SDLK_c:
                             qreplay_speed = input;
                             input = 0;
+                            if (evt.key.keysym.mod & KMOD_CTRL) {
+                                adjust_speed(qreplay_speed/10.0f);
+                            }
                             break;
 
                         case SDLK_KP_PERIOD:
@@ -434,6 +495,15 @@ int main(int argc, char *argv[])
                             input = 0;
                             break;
 
+                        case SDLK_PAGEDOWN:
+                            // if alt key was pushed, do a live cut, but also rewind the clips.
+                            if (evt.key.keysym.mod & KMOD_ALT) {
+                                live_cut_and_rewind(qreplay_cam);
+                            } else {
+                                live_cut(qreplay_cam);
+                            }
+                            break;
+
                         case SDLK_1:
                         case SDLK_2:
                         case SDLK_3:
@@ -447,6 +517,20 @@ int main(int argc, char *argv[])
                             if (qreplay_cam >= n_buffers) {
                                 qreplay_cam = n_buffers - 1;
                             }
+                            
+
+                            break;
+
+                        case SDLK_F10:
+                            do_playout_cmd(PLAYOUT_CMD_PAUSE);
+                            break;
+
+                        case SDLK_F11:
+                            do_playout_cmd(PLAYOUT_CMD_STEP);
+                            break;
+
+                        case SDLK_F12:
+                            do_playout_cmd(PLAYOUT_CMD_RESUME);
                             break;
 
                         case SDLK_ESCAPE:

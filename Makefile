@@ -3,6 +3,9 @@ SDK_PATH=../../include
 CFLAGS=-Wno-multichar -I $(SDK_PATH) -fno-rtti -g
 LDFLAGS=-lm -ldl -lpthread
 
+LAVC_INCLUDES=-I/usr/include/libavcodec -I/usr/include/libavformat -I/usr/include/libavutil -I/usr/include/libswscale
+LAVC_LIBS=-lavutil -lavformat -lavcodec -lz -lavutil -lm -lswscale -lavcodec
+
 all: raw_ingest ingest output preview_stream
 
 sdl_gui: sdl_gui.cpp mmap_buffer.cpp
@@ -31,6 +34,9 @@ decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 
 ingest: ingest.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o ingest ingest.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS)
+
+bmdplayoutd: bmdplayoutd.cpp 
+	$(CC) -o bmdplayoutd bmdplayoutd.cpp $(CFLAGS) $(LDFLAGS) $(LAVC_INCLUDES) $(LAVC_LIBS)
 
 bmdplayout: bmdplayout.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o bmdplayout bmdplayout.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS)
