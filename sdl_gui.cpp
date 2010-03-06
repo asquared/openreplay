@@ -278,7 +278,6 @@ int update_playout_timecode(void) {
 
     while (pfd.revents & POLLIN) {
         // ready to go!
-        fprintf(stderr, "Got something");
         recvfrom(socket_fd, &playout_timecode, sizeof(playout_timecode), 0, 0, 0);
         pfd.revents = 0;
         result = poll(&pfd, 1, 1);
@@ -296,7 +295,10 @@ int main(int argc, char *argv[])
         int input = 0;
         int waiting_postroll, postroll_left;
 
+        bool already_selected = false, tally_flag = false;
+
         SDL_Event evt;
+        SDL_Joystick *game_port = 0;
 
         socket_setup( );
 
@@ -325,8 +327,13 @@ int main(int argc, char *argv[])
 
 	fprintf(stderr, "All buffers ready. Initializing SDL...");
 
-	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_NOPARACHUTE) != 0) {
+	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_NOPARACHUTE) != 0) {
             fprintf(stderr, "Failed to initialize SDL!\n");
+        }
+
+        game_port = SDL_JoystickOpen(0);
+        if (!game_port) {
+            fprintf(stderr, "No joystick found. Auto-control will probably not work.\n");
         }
 
         screen = SDL_SetVideoMode(1920, 480*2, 24, SDL_HWSURFACE | SDL_DOUBLEBUF);
@@ -348,6 +355,7 @@ int main(int argc, char *argv[])
             if (waiting_postroll) {
                 if (buffers[0]->get_timecode( ) > marks[0] + postroll) {
                     last_logged = log_clips( );
+                    playout_clip = last_logged;
                     waiting_postroll = 0;
                 } else {
                     postroll_left = marks[0] + postroll - buffers[0]->get_timecode( );
@@ -388,7 +396,7 @@ int main(int argc, char *argv[])
                 line_of_text(font, &x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
             } else if (display_mode == PREVIEW) {
                 line_of_text(font, &x, &y, "REPLAY PREVIEW");
-                line_of_text(font, &x, &y, "%s", timecode_fmt(replay_ptrs[0]));
+                line_of_text(font, &x, &y, "%s", timecode_fmt(replay_ptrs[0] - (marks[0] - preroll)));
             }
                 
             line_of_text(font, &x, &y, "PLAYOUT: %s", timecode_fmt(playout_timecode));
@@ -405,6 +413,8 @@ int main(int argc, char *argv[])
             line_of_text(font, &x, &y, "PLAYOUT SPEED: %d [+zx-, +/*-, c]", qreplay_speed);
             line_of_text(font, &x, &y, "PLAYOUT CLIP: %d [keypad .]", playout_clip);
             line_of_text(font, &x, &y, "PLAYOUT SOURCE: %d [0..9, PgUp]", qreplay_cam + 1);
+            line_of_text(font, &x, &y, "AUTOTAKE [PgDn]", qreplay_cam + 1);
+            line_of_text(font, &x, &y, "AUTOTAKE + REWIND [Alt+PgDn]", qreplay_cam + 1);
             if (waiting_postroll) {
                 line_of_text(font, &x, &y, "AWAITING POSTROLL: %s", timecode_fmt(postroll_left));
                 line_of_text(font, &x, &y, "** DEL TO LOG NOW **", timecode_fmt(postroll_left));
@@ -412,6 +422,25 @@ int main(int argc, char *argv[])
                 line_of_text(font, &x, &y, "LOGGED CLIP: %d", last_logged);
             }
 
+
+            // Interface to a video switcher via the game port.
+            if (game_port && SDL_JoystickGetButton(game_port, 0) && !already_selected) {
+                fprintf(stderr, "button was pushed\n");
+                already_selected = true;
+                tally_flag = true;
+            }
+
+            if (game_port && !SDL_JoystickGetButton(game_port, 0)) {
+                fprintf(stderr, "no button pushed\n");
+                already_selected = false;
+                tally_flag = false;
+            }
+
+            if (tally_flag) {
+                fprintf(stderr, "Hey! The director took my replay! Let's roll...\n");
+                do_playout_cmd(PLAYOUT_CMD_RESUME);
+                tally_flag = false;
+            }
 
             // Event Processing
             if (SDL_PollEvent(&evt)) {
