@@ -187,6 +187,23 @@ void quick_playout(int clip) {
     }
 }
 
+int socket_fd;
+struct sockaddr_in daemon_addr;
+
+void socket_setup(void) {
+    memset(&addr, 0, sizeof(daemon_addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(30001);
+    inet_aton("127.0.0.1", &addr.sin_addr);
+
+    socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (socket_fd == -1) {
+        perror("socket");
+        exit(1);
+    }
+
+}
+
 int main(int argc, char *argv[])
 {
 	int frameCount;
