@@ -9,6 +9,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <poll.h>
+
 #include "SDL.h"
 #include "SDL_image.h"
 #include "SDL_rwops.h"
@@ -34,6 +36,7 @@ int preroll = 300, postroll = 300;
 int qreplay_speed = 10;
 int qreplay_cam = 0;
 int playout_pid = -1;
+int playout_timecode = 0;
 
 // Preview frames per frame
 #define PVW_FPF 3
@@ -240,6 +243,11 @@ void do_playout_cmd(int cmd_id) {
 
 
 void socket_setup(void) {
+    struct sockaddr_in bind_addr;
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = htons(30002);
+    inet_aton("127.0.0.1", &bind_addr.sin_addr);
+
     // set this to the address of the listening daemon
     memset(&daemon_addr, 0, sizeof(daemon_addr));
     daemon_addr.sin_family = AF_INET;
@@ -252,6 +260,29 @@ void socket_setup(void) {
         exit(1);
     }
 
+    if (bind(socket_fd, (struct sockaddr *) &bind_addr, sizeof(bind_addr)) == -1) {
+        perror("bind");
+    }
+
+}
+
+int update_playout_timecode(void) {
+    int result;
+    struct pollfd pfd;
+
+    pfd.fd = socket_fd;
+    pfd.events = POLLIN;
+
+    // poll...
+    result = poll(&pfd, 1, 1);
+
+    while (pfd.revents & POLLIN) {
+        // ready to go!
+        fprintf(stderr, "Got something");
+        recvfrom(socket_fd, &playout_timecode, sizeof(playout_timecode), 0, 0, 0);
+        pfd.revents = 0;
+        result = poll(&pfd, 1, 1);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -345,6 +376,9 @@ int main(int argc, char *argv[])
                 }
             }
 
+            // Try to update the timecode
+            update_playout_timecode( );
+
             // x, y points at the top left of the next free square
             x = 720*2 + 10;
             y = 10;
@@ -356,6 +390,8 @@ int main(int argc, char *argv[])
                 line_of_text(font, &x, &y, "REPLAY PREVIEW");
                 line_of_text(font, &x, &y, "%s", timecode_fmt(replay_ptrs[0]));
             }
+                
+            line_of_text(font, &x, &y, "PLAYOUT: %s", timecode_fmt(playout_timecode));
 
             //line_of_text(font, &x, &y, "");
             if (input > 0) {

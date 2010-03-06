@@ -469,8 +469,10 @@ int main(int argc, char *argv[]) {
                 step = false;
                 did_cut = false;
 
-                ++timecode;
-                update_timecode( );
+                if (result != END_OF_FILE) {
+                    ++timecode;
+                    update_timecode( );
+                }
 
             }
 
@@ -478,6 +480,7 @@ int main(int argc, char *argv[]) {
 
         /* else */ if (out.ReadyForNextFrame( ) && next_frame_ready) {
             out.Flip( );
+            next_frame_ready = false;
         } 
         
         if (try_receive(&cmd)) {
