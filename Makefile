@@ -35,8 +35,8 @@ decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 ingest: ingest.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o ingest ingest.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS)
 
-bmdplayoutd: bmdplayoutd.cpp 
-	$(CC) -o bmdplayoutd bmdplayoutd.cpp $(CFLAGS) $(LDFLAGS) $(LAVC_INCLUDES) $(LAVC_LIBS)
+bmdplayoutd: bmdplayoutd.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp 
+	$(CC) -o bmdplayoutd bmdplayoutd.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS) $(LAVC_INCLUDES) $(LAVC_LIBS)
 
 bmdplayout: bmdplayout.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o bmdplayout bmdplayout.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS)

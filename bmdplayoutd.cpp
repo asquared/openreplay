@@ -17,7 +17,7 @@ extern "C" {
     #include <swscale.h>
 }
 
-//#include "DeckLinkAPI.h"
+#include "DeckLinkAPI.h"
 //#include "Capture.h"
 
 #include "playout_ctl.h"
@@ -158,26 +158,23 @@ protected:
     uint8_t *buffer;
 };
 
-#if 0
 class DecklinkOutput {
 public:
-    DecklinkOutput(int cardIndex = 1) 
+    DecklinkOutput(int cardIndex = 0) 
         : deckLink(0), deckLinkOutput(0), deckLinkIterator(0),
-          displayMode(0), deckLinkConfig(0), selectedDisplayMode(bmdModeNTSC)
+          displayMode(0), deckLinkConfig(0), frame_duration(66)
     {
         deckLinkIterator = CreateDeckLinkIteratorInstance( ); 
 	/* Connect to DeckLink card */
 	if (!deckLinkIterator) {
-            fprintf(stderr, "This application requires the DeckLink drivers installed.\n");
-            goto bail;
+            throw std::runtime_error("This application requires the DeckLink drivers installed.");
 	}
 
 	while (cardIndex >= 0) {
             /* Connect to the first DeckLink instance */
             result = deckLinkIterator->Next(&deckLink);
             if (result != S_OK) {
-                fprintf(stderr, "Invalid card index.\n");
-                goto bail;
+                throw std::runtime_error("Invalid card index.");
             }
             cardIndex--;
 	}
@@ -218,7 +215,7 @@ public:
 
     void Flip(void) {
         update_time( );
-        frame_start = 
+        frame_start = time_now;
         if (deckLinkOutput->DisplayVideoFrameSync(frame) != S_OK) {
             fprintf(stderr, "warning: frame display failed\n");
         }
@@ -267,17 +264,16 @@ protected:
     IDeckLink *deckLink;
     IDeckLinkOutput *deckLinkOutput;
     IDeckLinkIterator *deckLinkIterator;
-    IDeckLinkDisplayMode *displayMode = 0;
-    IDeckLinkConfiguration *deckLinkConfig = 0;
+    IDeckLinkDisplayMode *displayMode;
+    IDeckLinkConfiguration *deckLinkConfig;
     IDeckLinkMutableVideoFrame *frame;
     BMDTimeValue frame_start, time_now;
 
-    int frame_duration = 66; // this should play things back at roughly 1/2 speed...
+    int frame_duration; 
     HRESULT	result;
     const char *string;
 
 };
-#endif
 
 class StdoutOutput {
 public:
@@ -391,6 +387,8 @@ void open_new_files(char *filenames) {
     }
 }
 
+DecklinkOutput out;
+
 void parse_command(struct playout_command *cmd) {
     switch(cmd->cmd) {
         case PLAYOUT_CMD_START_FILES:
@@ -399,7 +397,13 @@ void parse_command(struct playout_command *cmd) {
             playout_source = cmd->source;
             did_cut = true;
             timecode = 0;
+            out.SetSpeed(cmd->new_speed);
             break;
+
+        case PLAYOUT_CMD_ADJUST_SPEED:
+            out.SetSpeed(cmd->new_speed);            
+            break;
+
         case PLAYOUT_CMD_CUT_REWIND:
             // rewind all the sources
             for (int j = 0; j < MAX_OPEN_FILES && open_files[j]; ++j) {
@@ -441,12 +445,12 @@ decode_status advance_all_and_read_from(int source) {
     return result;
 }
 
+
 int main(int argc, char *argv[]) {
     struct playout_command cmd;
     unsigned char *buf = (unsigned char *)malloc(2*720*480);
     bool next_frame_ready = false;
     decode_status result;
-    StdoutOutput out;
 
     socket_setup( );
     av_register_all( );

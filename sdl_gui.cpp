@@ -202,6 +202,8 @@ void quick_playout(int clip) {
         ptr++;
         n_left--;
     }
+                                
+    cmd.new_speed = qreplay_speed/10.0f;
 
     ptr[0] = '\0';
 
