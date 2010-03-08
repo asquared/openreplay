@@ -250,7 +250,7 @@ public:
     }
 
     void SetSpeed(float speed) {
-        frame_duration = 1000 * speed / (float) FRAMES_PER_SEC;
+        frame_duration = 1000 / ( (float) FRAMES_PER_SEC * speed);
     }
 
 

@@ -32,7 +32,7 @@ unsigned char frame[MAX_FRAME_SIZE];
 int *marks, *replay_ptrs, *replay_ends;
 
 // Preroll frames from mark
-int preroll = 300, postroll = 300;
+int preroll = 150, postroll = 300;
 int qreplay_speed = 10;
 int qreplay_cam = 0;
 int playout_pid = -1;
@@ -472,10 +472,6 @@ int main(int argc, char *argv[])
                             waiting_postroll = 0;
                             break;
 
-                        case SDLK_END:
-                            system("killall bmdplayout");
-                            break;
-
                         case SDLK_INSERT:
                         case SDLK_p:
                             preview( );
@@ -516,7 +512,7 @@ int main(int argc, char *argv[])
                         case SDLK_z:
                         case SDLK_KP_DIVIDE:
                             qreplay_speed++;
-                            if (evt.key.keysym.mod & KMOD_CTRL) {
+                            if (!(evt.key.keysym.mod & KMOD_CTRL)) {
                                 adjust_speed(qreplay_speed/10.0f);
                             }
                             break;
@@ -526,14 +522,14 @@ int main(int argc, char *argv[])
                             if (qreplay_speed < 0) {
                                 qreplay_speed = 0;
                             }
-                            if (evt.key.keysym.mod & KMOD_CTRL) {
+                            if (!(evt.key.keysym.mod & KMOD_CTRL)) {
                                 adjust_speed(qreplay_speed/10.0f);
                             }
                             break;
                         case SDLK_c:
                             qreplay_speed = input;
                             input = 0;
-                            if (evt.key.keysym.mod & KMOD_CTRL) {
+                            if (!(evt.key.keysym.mod & KMOD_CTRL)) {
                                 adjust_speed(qreplay_speed/10.0f);
                             }
                             break;
@@ -569,6 +565,10 @@ int main(int argc, char *argv[])
                             } else {
                                 live_cut(qreplay_cam);
                             }
+                            break;
+
+                        case SDLK_END:
+                            live_cut_and_rewind(qreplay_cam);
                             break;
 
                         case SDLK_1:
