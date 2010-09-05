@@ -331,6 +331,7 @@ int main(int argc, char *argv[])
 
         if (!font) {
             fprintf(stderr, "Failed to load font!");
+            return 1;
         }
 
 	if (argc < 2) {
