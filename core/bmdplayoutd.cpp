@@ -197,7 +197,7 @@ public:
     }
 
     void SetSpeed(float speed) {
-        // we can't change the damn speed...
+        // stdout has no speed control, so don't do anything
     }
 
 protected:
@@ -324,7 +324,8 @@ int main(int argc, char *argv[]) {
     struct playout_command cmd;
     static uint8_t frame_data[MAX_FRAME_SIZE];
     bool next_frame_ready = false;
-    int frame_size, i;
+    int i;
+    size_t frame_size;
 
     AVPicture *decoded_frame, *scaled_frame;
 

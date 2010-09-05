@@ -30,9 +30,8 @@ int main(int argc, char *argv[])
 
     int buf_ptr = 0;
     int n_read;
-    int scan_start, j, start_of_frame = -1;
+    int j, start_of_frame = -1;
     int move_start = -1;
-    int frame_count = 0;
 
     if (argc < 2) {
             fprintf(stderr, "usage: %s buffer_file\n", argv[0]);

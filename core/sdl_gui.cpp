@@ -62,19 +62,18 @@ int playout_timecode = 0;
 #define PVW_FPF 3
 
 
-enum { PREVIEW, LIVE } display_mode;
+enum _display_mode { PREVIEW, LIVE } display_mode;
 
 int socket_fd;
 struct sockaddr_in daemon_addr;
 
 void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
     SDL_Rect rect;
-    SDL_RWops *io_buf;
     AVPicture *decoded, *scaled;
     uint8_t *pixels;
     int i;
     
-    int size;
+    size_t size;
 
     rect.x = x;
     rect.y = y;
@@ -188,7 +187,7 @@ void draw_char(char ch, SDL_Surface *dest, SDL_Rect *where) {
     where->x += FONT_CELL_W;
 }
 
-void line_of_text(SDL_Surface *font, int *x, int *y, const char *fmt, ...) {
+void line_of_text(int *x, int *y, const char *fmt, ...) {
     SDL_Color col;
     va_list ap;
     char out_buf[256];
@@ -217,7 +216,7 @@ void line_of_text(SDL_Surface *font, int *x, int *y, const char *fmt, ...) {
 }
 
 
-void quick_playout(int clip) {
+void start_playout(void) {
     int j;
 
     struct playout_command cmd;
@@ -290,7 +289,7 @@ void socket_setup(void) {
 
 }
 
-int update_playout_timecode(void) {
+void update_playout_timecode(void) {
     int result;
     struct pollfd pfd;
 
@@ -310,13 +309,11 @@ int update_playout_timecode(void) {
 
 int main(int argc, char *argv[])
 {
-	int frameCount;
-        int x, y, j, k;
+        int x, y, j;
         int last_logged = -1;
         int flag = 0;
         int playout_clip = 0;
         int input = 0;
-        int waiting_postroll, postroll_left;
 
         bool already_selected = false, tally_flag = false;
 
@@ -412,29 +409,28 @@ int main(int argc, char *argv[])
             y = 10;
 
             if (display_mode == LIVE) {
-                line_of_text(font, &x, &y, "LIVE PREVIEW");
-                line_of_text(font, &x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
+                line_of_text(&x, &y, "LIVE PREVIEW");
+                line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
             } else if (display_mode == PREVIEW) {
-                line_of_text(font, &x, &y, "REPLAY PREVIEW");
-                line_of_text(font, &x, &y, "%s", timecode_fmt(replay_ptrs[0] - (marks[0] - preroll)));
+                line_of_text(&x, &y, "REPLAY PREVIEW");
+                line_of_text(&x, &y, "%s", timecode_fmt(replay_ptrs[0] - (marks[0] - preroll)));
             }
                 
-            line_of_text(font, &x, &y, "PLAYOUT: %s", timecode_fmt(playout_timecode));
+            line_of_text(&x, &y, "PLAYOUT: %s", timecode_fmt(playout_timecode));
 
             //line_of_text(font, &x, &y, "");
             if (input > 0) {
-                line_of_text(font, &x, &y, "%d ", input);
+                line_of_text(&x, &y, "%d ", input);
             } else {
-                line_of_text(font, &x, &y, " ");
+                line_of_text(&x, &y, " ");
             }
-            line_of_text(font, &x, &y, "MARK: %s", timecode_fmt(marks[0]));
-            line_of_text(font, &x, &y, "PREROLL:  %s [+qw-, e]", timecode_fmt(preroll));
-            line_of_text(font, &x, &y, "POSTROLL: %s [+as-, d]", timecode_fmt(postroll));
-            line_of_text(font, &x, &y, "PLAYOUT SPEED: %d [+zx-, +/*-, c]", qreplay_speed);
-            line_of_text(font, &x, &y, "PLAYOUT CLIP: %d [keypad .]", playout_clip);
-            line_of_text(font, &x, &y, "PLAYOUT SOURCE: %d [0..9, PgUp]", qreplay_cam + 1);
-            line_of_text(font, &x, &y, "AUTOTAKE [PgDn]", qreplay_cam + 1);
-            line_of_text(font, &x, &y, "AUTOTAKE + REWIND [Alt+PgDn]", qreplay_cam + 1);
+            line_of_text(&x, &y, "MARK: %s", timecode_fmt(marks[0]));
+            line_of_text(&x, &y, "PREROLL:  %s [+qw-, e]", timecode_fmt(preroll));
+            line_of_text(&x, &y, "POSTROLL: %s [+as-, d]", timecode_fmt(postroll));
+            line_of_text(&x, &y, "PLAYOUT SPEED: %d [+zx-, +/*-, c]", qreplay_speed);
+            line_of_text(&x, &y, "PLAYOUT SOURCE: %d [0..9, PgUp]", qreplay_cam + 1);
+            line_of_text(&x, &y, "AUTOTAKE [PgDn]");
+            line_of_text(&x, &y, "AUTOTAKE + REWIND [Alt+PgDn]");
 
             // Interface to a video switcher via the game port.
             if (game_port && SDL_JoystickGetButton(game_port, 0) && !already_selected) {
@@ -558,12 +554,7 @@ int main(int argc, char *argv[])
 
                         case SDLK_SPACE:
                         case SDLK_KP_ENTER:
-                            quick_playout(last_logged);
-                            break;
-
-                        case SDLK_BACKSPACE:
-                        case SDLK_KP_MINUS:
-                            quick_playout(playout_clip);
+                            start_playout( );
                             break;
 
                         case SDLK_PAGEUP:
@@ -603,12 +594,16 @@ int main(int argc, char *argv[])
 
                             break;
 
-                        case SDLK_F10:
+                        case SDLK_F9:
                             do_playout_cmd(PLAYOUT_CMD_PAUSE);
                             break;
 
+                        case SDLK_F10:
+                            do_playout_cmd(PLAYOUT_CMD_STEP_BACKWARD);
+                            break;
+
                         case SDLK_F11:
-                            do_playout_cmd(PLAYOUT_CMD_STEP);
+                            do_playout_cmd(PLAYOUT_CMD_STEP_FORWARD);
                             break;
 
                         case SDLK_F12:
@@ -619,6 +614,9 @@ int main(int argc, char *argv[])
 			    flag = 1;
                             break;
 			
+                        /* suppress compiler warning */
+                        default:
+                            break;
                     }
                 } 
             }

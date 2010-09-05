@@ -108,9 +108,9 @@ MmapBuffer::~MmapBuffer( ) {
     }
 }
 
-int MmapBuffer::put(const void *data, int size) {
-    int save_timecode = mmapped_ipc->current_timecode;
-    long long save_offset = mmapped_ipc->current_offset;
+timecode_t MmapBuffer::put(const void *data, size_t size) {
+    timecode_t save_timecode = mmapped_ipc->current_timecode;
+    offset_t save_offset = mmapped_ipc->current_offset;
     struct record *rec;
 
     /* compute the offset and timecode values for the new frame */
@@ -123,7 +123,7 @@ int MmapBuffer::put(const void *data, int size) {
     /* copy the data into the buffer */
     rec = (struct record *)(mmapped_data + save_offset);
     rec->length = size;
-    rec->valid = 1;
+    rec->valid = true;
     rec->timecode = save_timecode;
     memcpy(rec->data, data, size);
 
@@ -139,8 +139,7 @@ int MmapBuffer::put(const void *data, int size) {
     return mmapped_ipc->current_timecode;
 }
 
-bool MmapBuffer::get(void *data, int *size, int timecode) {
-    int actual_size; 
+bool MmapBuffer::get(void *data, size_t *size, timecode_t timecode) {
     struct record *rec;
     
     if (sem_wait((sem_t *)&mmapped_ipc->sem) < 0) {

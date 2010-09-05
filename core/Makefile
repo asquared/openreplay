@@ -5,7 +5,7 @@ LDFLAGS=-lm -ldl -lpthread
 FFCFLAGS=`pkg-config libavcodec libavformat libswscale libavutil --cflags` 
 FFLDFLAGS=`pkg-config libavcodec libavformat libswscale libavutil --libs` -lavutil
 
-all: raw_ingest ingest output preview_stream
+all: sdl_gui mjpeg_ingest bmdplayoutd
 
 sdl_gui: sdl_gui.cpp mmap_buffer.cpp ffwrapper.cpp
 	$(CC) $(CFLAGS) $(FFCFLAGS) `sdl-config --cflags` -o sdl_gui sdl_gui.cpp ffwrapper.cpp mmap_buffer.cpp $(LDFLAGS) $(FFLDFLAGS) `sdl-config --libs` -lSDL_image -lSDL_ttf 
