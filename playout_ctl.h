@@ -1,7 +1,12 @@
 #ifndef _PLAYOUT_CTL_H
 #define _PLAYOUT_CTL_H
 
-#define PLAYOUT_CMD_START_FILES 0x00
+/*
+ * This file defines the format of the messages used to control
+ * the playout daemons.
+ */
+
+#define PLAYOUT_CMD_START_FILES 0x00 
 #define PLAYOUT_CMD_CUT 0x01
 #define PLAYOUT_CMD_CUT_REWIND 0x02
 #define PLAYOUT_CMD_ADJUST_SPEED 0x03
