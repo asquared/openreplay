@@ -11,28 +11,48 @@
 
 #include <poll.h>
 
+#include "ffwrapper.h"
+
 #include "SDL.h"
 #include "SDL_image.h"
-#include "SDL_rwops.h"
-#include "SDL_ttf.h"
 
 #include "mmap_buffer.h"
 #include "mjpeg_config.h"
 #include "playout_ctl.h"
 
-SDL_Surface *screen, *frame_buf;
+
+#define PVW_W 720
+#define PVW_H 480
+
+SDL_Surface *screen, *frame_buf, *font;
+
+#define FONT_CELL_W 14
+#define FONT_CELL_H 20
+#define FONT_START ' '
 
 MmapBuffer **buffers;
 int n_buffers;
 int clip_no = 0;
 
+#define INST_PERIOD 1000
+int n_decoded, last_check;
 
 unsigned char frame[MAX_FRAME_SIZE];
 
+// fix an FFmpeg namespace conflict
+#define mjpeg_decoder openreplay_mjpeg_decoder
+
+FFwrapper::Decoder mjpeg_decoder( CODEC_ID_MJPEG );
+FFwrapper::Scaler scaler(PVW_W, PVW_H, PIX_FMT_BGR24);
+
 int *marks, *replay_ptrs, *replay_ends;
 
+#define MIN_SPEED -20
+#define MAX_SPEED 15
+
 // Preroll frames from mark
-int preroll = 150, postroll = 300;
+int preroll = 150;
+int postroll = 300; // used for preview only
 int qreplay_speed = 10;
 int qreplay_cam = 0;
 int playout_pid = -1;
@@ -50,7 +70,9 @@ struct sockaddr_in daemon_addr;
 void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
     SDL_Rect rect;
     SDL_RWops *io_buf;
-    SDL_Surface *img;
+    AVPicture *decoded, *scaled;
+    uint8_t *pixels;
+    int i;
     
     int size;
 
@@ -65,14 +87,37 @@ void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
         SDL_FillRect(frame_buf, 0, 0);
         SDL_BlitSurface(frame_buf, 0, screen, &rect);
     } else {
-        // do JPEG decode using SDL_image...
-        io_buf = SDL_RWFromMem(frame, size);
-        img = IMG_Load_RW(io_buf, 1);
-        if (!img) {
-            fprintf(stderr, "JPEG load failed!\n");
-        }
-        SDL_BlitSurface(img, 0, screen, &rect);
-        SDL_FreeSurface(img);
+        try {
+            decoded = mjpeg_decoder.try_decode(frame, size);
+            if (decoded) {
+                scaled = scaler.scale(decoded, mjpeg_decoder.get_ctx( ));
+                if (SDL_MUSTLOCK(frame_buf)) {
+                    SDL_LockSurface(frame_buf);
+                }
+                pixels = (uint8_t *)frame_buf->pixels;
+                for (i = 0; i < PVW_H; ++i) {
+                    memcpy(pixels, scaled->data[0] + scaled->linesize[0] * i, PVW_W * 3);
+                    pixels += PVW_W * 3;
+                }
+                if (SDL_MUSTLOCK(frame_buf)) {
+                    SDL_UnlockSurface(frame_buf);
+                }
+                SDL_BlitSurface(frame_buf, 0, screen, &rect);
+
+                n_decoded++;
+
+                if (n_decoded == INST_PERIOD) {
+                    fprintf(stderr, "%f fps\n", (float)INST_PERIOD / (float)(time(NULL) - last_check));
+                    last_check = time(NULL);
+                    n_decoded = 0;
+                }
+            }
+        } catch (FFwrapper::CodecError e) {
+            fprintf(stderr, "error decoding a frame\n");
+        } catch (FFwrapper::AllocationError e) {
+            fprintf(stderr, "failed to allocate memory in libavcodec\n");
+        } 
+
     }
 
 }
@@ -115,10 +160,39 @@ const char *timecode_fmt(int timecode) {
     return buf;
 }
 
-void line_of_text(TTF_Font *font, int *x, int *y, const char *fmt, ...) {
+void draw_char(char ch, SDL_Surface *dest, SDL_Rect *where) {
+    SDL_Rect char_cell;
+    int y_offset = 0, x_offset = 0;
+    int n_per_row;
+
+    n_per_row = font->w / FONT_CELL_W;
+
+    if (ch >= FONT_START) {
+        // compute x and y coordinates
+        y_offset = (ch - FONT_START) / n_per_row;
+        x_offset = (ch - y_offset * n_per_row - FONT_START);
+
+        y_offset *= FONT_CELL_H;
+        x_offset *= FONT_CELL_W;
+
+        char_cell.x = x_offset;
+        char_cell.y = y_offset;
+        char_cell.w = FONT_CELL_W;
+        char_cell.h = FONT_CELL_H;
+
+        if (x_offset < font->w && y_offset < font->h) {
+            SDL_BlitSurface(font, &char_cell, dest, where);
+        }
+    }
+
+    where->x += FONT_CELL_W;
+}
+
+void line_of_text(SDL_Surface *font, int *x, int *y, const char *fmt, ...) {
     SDL_Color col;
     va_list ap;
     char out_buf[256];
+    char *out_ptr;
     SDL_Rect dest;
 
     dest.x = *x;
@@ -132,80 +206,28 @@ void line_of_text(TTF_Font *font, int *x, int *y, const char *fmt, ...) {
     vsnprintf(out_buf, sizeof(out_buf) - 1, fmt, ap);
     va_end(ap);
     out_buf[sizeof(out_buf) - 1] = 0;
+    out_ptr = out_buf;
 
-    SDL_Surface *surf = TTF_RenderText_Solid(font, out_buf, col);
-    SDL_BlitSurface(surf, 0, screen, &dest);
-    
-    *y += surf->h + 5;
-}
-
-int log_clips(void) {
-    // who knows what the hell this'll do...
-    int child = fork( );
-    int j, tc, size = sizeof(frame), dropped;
-    int fd;
-
-    char fmt_buf[256];
-    if (child < 0) {
-        fprintf(stderr, "Fork failed in log_clips\n");
-    } else if (child == 0) {
-        // log the clips
-        for (j = 0; j < n_buffers; ++j) {
-            snprintf(fmt_buf, sizeof(fmt_buf) - 1, "replay%03d_feed%02d.mjpg", clip_no, j);
-            fmt_buf[sizeof(fmt_buf) - 1] = 0; 
-
-            fd = open(fmt_buf, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-
-            tc = marks[j] - preroll;
-            dropped = 0;
-            while (tc < marks[j] + postroll && dropped < 5) { 
-                size = sizeof(frame);
-                if (!(buffers[j]->get(frame, &size, tc))) {
-                    dropped++;
-                }
-                tc++;
-                // write out
-                write(fd, frame, size);
-            }
-        }
-        exit(0);
-    } else {
-        return clip_no++;        
+    while (*out_ptr) {
+        draw_char(*out_ptr, screen, &dest);
+        out_ptr++;
     }
+    
+    *y += FONT_CELL_H + 5;
 }
+
 
 void quick_playout(int clip) {
     int j;
 
     struct playout_command cmd;
     cmd.source = qreplay_cam;
-    cmd.cmd = PLAYOUT_CMD_START_FILES;
-    
-    int n_left = sizeof(cmd.filenames) - 2;
-    int n_written;
-
-    cmd.filenames[ sizeof(cmd.filenames) - 1 ] = 0;
-    cmd.filenames[ sizeof(cmd.filenames) - 2 ] = 0;
-
-    char *ptr = cmd.filenames;
-
-    for (j = 0; j < n_buffers; ++j) {
-        n_written = snprintf(ptr, n_left, "replay%03d_feed%02d.mjpg", clip, j);
-        if (n_written > n_left) {
-            n_written = n_left;
-        }
-
-        n_left -= n_written;
-        ptr += n_written;
-
-        ptr[0] = '\0';
-        ptr++;
-        n_left--;
-    }
-                                
+    cmd.cmd = PLAYOUT_CMD_CUE;
     cmd.new_speed = qreplay_speed/10.0f;
 
-    ptr[0] = '\0';
+    for (j = 0; j < n_buffers; ++j) {
+        cmd.marks[j] = marks[j] - preroll;
+    }
 
     // ready to go... so do it.
     sendto(socket_fd, &cmd, sizeof(cmd), 0, (struct sockaddr *)&daemon_addr, sizeof(daemon_addr));
@@ -291,7 +313,6 @@ int main(int argc, char *argv[])
 	int frameCount;
         int x, y, j, k;
         int last_logged = -1;
-        TTF_Font *font;
         int flag = 0;
         int playout_clip = 0;
         int input = 0;
@@ -302,30 +323,37 @@ int main(int argc, char *argv[])
         SDL_Event evt;
         SDL_Joystick *game_port = 0;
 
+        n_decoded = 0;
+        last_check = time(NULL);
+
         socket_setup( );
 
         signal(SIGCHLD, SIG_IGN); // we don't care about our children...
 
-        TTF_Init( );
-        font = TTF_OpenFont("Consolas.ttf", 24);
+        font = IMG_Load("font.bmp");
 
-	if (argc < 3) {
-		fprintf(stderr, "usage: %s control_file data_file ...\n", argv[0]);
+        if (!font) {
+            fprintf(stderr, "Failed to load font!");
+        }
+
+	if (argc < 2) {
+		fprintf(stderr, "usage: %s buffer_file ...\n", argv[0]);
 		return 1;
 	}
 
+        n_buffers = argc - 1;
+        buffers = (MmapBuffer **)malloc(n_buffers * sizeof(MmapBuffer *));
+        marks = (int *)malloc(n_buffers * sizeof(int *));
+        replay_ptrs = (int *)malloc(n_buffers * sizeof(int *));
+        replay_ends = (int *)malloc(n_buffers * sizeof(int *));
 
-        buffers = (MmapBuffer **)malloc( (argc - 1) / 2 * sizeof(MmapBuffer *));
-        marks = (int *)malloc( (argc - 1) / 2 * sizeof(int *));
-        replay_ptrs = (int *)malloc( (argc - 1) / 2 * sizeof(int *));
-        replay_ends = (int *)malloc( (argc - 1) / 2 * sizeof(int *));
-
-        k = 0;
-
-	for (j = 1; j < argc - 1; j += 2, k++) {
-		buffers[k] = new MmapBuffer(argv[j], argv[j+1], MAX_FRAME_SIZE); 
+        // initialize buffers from command line args
+	for (j = 1; j < argc; j ++) {
+	    buffers[j - 1] = new MmapBuffer(argv[j], MAX_FRAME_SIZE); 
 	}
-        n_buffers = k;
+        n_buffers = j - 1;
+
+        mark( ); // initialize the mark
 
 	fprintf(stderr, "All buffers ready. Initializing SDL...");
 
@@ -344,26 +372,16 @@ int main(int argc, char *argv[])
             goto dead;
         }
 
-        frame_buf = SDL_CreateRGBSurface(SDL_HWSURFACE, 720, 480, 24, 0, 0, 0, 0);
+        frame_buf = SDL_CreateRGBSurface(SDL_HWSURFACE, PVW_W, PVW_H, 24, 0, 0, 0, 0);
         if (!frame_buf) {
             fprintf(stderr, "Failed to create frame buffer!\n");
             goto dead;
         }
 
+
         SDL_EnableUNICODE(1);
 
         while (!flag) {
-            // Await postroll
-            if (waiting_postroll) {
-                if (buffers[0]->get_timecode( ) > marks[0] + postroll) {
-                    last_logged = log_clips( );
-                    playout_clip = last_logged;
-                    waiting_postroll = 0;
-                } else {
-                    postroll_left = marks[0] + postroll - buffers[0]->get_timecode( );
-                }
-            }
-
             // Video Output
             SDL_FillRect(screen, 0, 0);
             x = 0;
@@ -417,13 +435,6 @@ int main(int argc, char *argv[])
             line_of_text(font, &x, &y, "PLAYOUT SOURCE: %d [0..9, PgUp]", qreplay_cam + 1);
             line_of_text(font, &x, &y, "AUTOTAKE [PgDn]", qreplay_cam + 1);
             line_of_text(font, &x, &y, "AUTOTAKE + REWIND [Alt+PgDn]", qreplay_cam + 1);
-            if (waiting_postroll) {
-                line_of_text(font, &x, &y, "AWAITING POSTROLL: %s", timecode_fmt(postroll_left));
-                line_of_text(font, &x, &y, "** DEL TO LOG NOW **", timecode_fmt(postroll_left));
-            } else if (last_logged != -1) {
-                line_of_text(font, &x, &y, "LOGGED CLIP: %d", last_logged);
-            }
-
 
             // Interface to a video switcher via the game port.
             if (game_port && SDL_JoystickGetButton(game_port, 0) && !already_selected) {
@@ -464,12 +475,6 @@ int main(int argc, char *argv[])
                         case SDLK_m:
                         case SDLK_KP_PLUS:
                             mark( );
-                            waiting_postroll = 1;
-                            break;
-
-                        case SDLK_DELETE:
-                            last_logged = log_clips( );
-                            waiting_postroll = 0;
                             break;
 
                         case SDLK_INSERT:
@@ -512,6 +517,9 @@ int main(int argc, char *argv[])
                         case SDLK_z:
                         case SDLK_KP_DIVIDE:
                             qreplay_speed++;
+                            if (qreplay_speed > MAX_SPEED) {
+                                qreplay_speed = MAX_SPEED;
+                            }
                             if (!(evt.key.keysym.mod & KMOD_CTRL)) {
                                 adjust_speed(qreplay_speed/10.0f);
                             }
@@ -519,8 +527,8 @@ int main(int argc, char *argv[])
                         case SDLK_x:
                         case SDLK_KP_MULTIPLY:
                             qreplay_speed--;
-                            if (qreplay_speed < 0) {
-                                qreplay_speed = 0;
+                            if (qreplay_speed < MIN_SPEED) {
+                                qreplay_speed = MIN_SPEED;
                             }
                             if (!(evt.key.keysym.mod & KMOD_CTRL)) {
                                 adjust_speed(qreplay_speed/10.0f);
@@ -529,6 +537,13 @@ int main(int argc, char *argv[])
                         case SDLK_c:
                             qreplay_speed = input;
                             input = 0;
+                            if (qreplay_speed > MAX_SPEED) {
+                                qreplay_speed = MAX_SPEED;
+                            }
+
+                            if (qreplay_speed < MIN_SPEED) {
+                                qreplay_speed = MIN_SPEED;
+                            }
                             if (!(evt.key.keysym.mod & KMOD_CTRL)) {
                                 adjust_speed(qreplay_speed/10.0f);
                             }

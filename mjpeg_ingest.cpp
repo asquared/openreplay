@@ -34,13 +34,13 @@ int main(int argc, char *argv[])
     int move_start = -1;
     int frame_count = 0;
 
-    if (argc < 3) {
-            fprintf(stderr, "usage: %s control_file data_file\n", argv[0]);
+    if (argc < 2) {
+            fprintf(stderr, "usage: %s buffer_file\n", argv[0]);
             return 1;
     }
 
     /* Open the ring buffer files. */
-    buffer = new MmapBuffer(argv[1], argv[2], MAX_FRAME_SIZE); 
+    buffer = new MmapBuffer(argv[1], MAX_FRAME_SIZE); 
 
     /* 
      * Parse stdin, looking for jpeg markers. 

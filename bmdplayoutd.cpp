@@ -11,154 +11,31 @@
 #include <poll.h>
 #include <string.h>
 
-extern "C" {
-    #include <avcodec.h>
-    #include <avformat.h>
-    #include <swscale.h>
-}
-
-#include "DeckLinkAPI.h"
-//#include "Capture.h"
+#include "ffwrapper.h"
+#include "mmap_buffer.h"
+#include "mjpeg_config.h"
 
 #include "playout_ctl.h"
 
-enum decode_status { SUCCESS, FAILURE, END_OF_FILE };
-#define FRAMES_PER_SEC 30
+#define OUT_FRAME_W 720
+#define OUT_FRAME_H 480
 
-// ohmygodcocaine... this amounts to magic incantations found throughout the internets...
-class lavc_decoder {
+class OutputAdapter {
 public:
-    lavc_decoder(const char *filename) {
-        fprintf(stderr, "trying to open %s\n", filename);
-        if (av_open_input_file(&format_ctx, filename, 0, 0, 0) != 0) {
-            throw std::runtime_error("av_open_input_file failed");
-        }
-
-        if (av_find_stream_info(format_ctx) < 0) {
-            throw std::runtime_error("av_find_stream_info failed");
-        }
-
-        video_stream = -1;
-        for (int i = 0; i < format_ctx->nb_streams; ++i) {
-            if (format_ctx->streams[i]->codec->codec_type == CODEC_TYPE_VIDEO) {
-                video_stream = i;
-                break;
-            }
-        }
-
-        if (video_stream == -1) {
-            throw std::runtime_error("no video stream");
-        }
-
-        codec_ctx = format_ctx->streams[video_stream]->codec;
-        codec = avcodec_find_decoder(codec_ctx->codec_id);
-        
-        if (!codec) {
-            throw std::runtime_error("no codec found");
-        }
-
-        if (avcodec_open(codec_ctx, codec) < 0) {
-            throw std::runtime_error("codec failure");
-        }
-
-        frame = avcodec_alloc_frame( );
-        if (!frame) {
-            throw std::runtime_error("frame allocation error (1)");
-        }
-
-        frameUYVY = avcodec_alloc_frame( );
-        if (!frameUYVY) {
-            throw std::runtime_error("frame allocation error (1)");
-        }
-
-        int numBytes = avpicture_get_size(PIX_FMT_UYVY422, codec_ctx->width, codec_ctx->height);
-
-        buffer = (uint8_t *)av_malloc(numBytes * sizeof(uint8_t));
-
-        avpicture_fill((AVPicture *)frameUYVY, buffer, PIX_FMT_UYVY422, codec_ctx->width, codec_ctx->height);
-
-        sws_ctx = sws_getContext(
-            codec_ctx->width, codec_ctx->height, codec_ctx->pix_fmt, 
-            codec_ctx->width, codec_ctx->height, PIX_FMT_UYVY422,
-            SWS_FAST_BILINEAR | SWS_PRINT_INFO, 0, 0, 0
-        );
-
-    }
-
-    decode_status read_frame(bool want_decode) {
-        int frameFinished;
-        if (av_read_frame(format_ctx, &packet) >= 0) {
-            if (packet.stream_index == video_stream) {
-                if (want_decode) {
-                    avcodec_decode_video(codec_ctx, frame, &frameFinished, packet.data, packet.size);
-
-                    if (frameFinished) {
-                        av_free_packet(&packet);
-                        return SUCCESS;
-                    } else {
-                        return FAILURE; // decode error??
-                    }
-                } else {
-                    // skip the frame
-                    return SUCCESS;
-                }
-            }
-            av_free_packet(&packet);
-        }
-
-        return END_OF_FILE; // we were unable to read another frame...
-    }
-
-    void copy_frame(void *dest, int width, int height) {
-        int y;
-        int maxh, maxw;
-
-        uint8_t *conv_dest[3] = {(uint8_t *) dest, 0, 0};
-        int conv_stride[3] = { 2*width, 0, 0 };
-        
-        if (height < codec_ctx->height) {
-            maxh = height;
-        } else {
-            maxh = codec_ctx->height;
-        }
-
-        if (width < codec_ctx->width) {
-            maxw = width;
-        } else {
-            maxw = codec_ctx->width;
-        }
-
-        // this is probably cocaine.
-        sws_scale(sws_ctx, frame->data, frame->linesize, 0, maxh, conv_dest, conv_stride);
-
-    }
-
-    void rewind(void) {
-        // hopefully this does the job...
-        av_seek_frame(format_ctx, -1, 0, AVSEEK_FLAG_BYTE);
-    }
-
-    ~lavc_decoder( ) {
-        av_free(buffer);
-        av_free(frameUYVY);
-        av_free(frame);
-        avcodec_close(codec_ctx);
-        av_close_input_file(format_ctx);
-    }
-
-
-protected:
-    AVFormatContext *format_ctx;
-    AVCodecContext *codec_ctx;
-    AVCodec *codec;
-    AVFrame *frame, *frameUYVY;
-    struct SwsContext *sws_ctx;
-    AVPacket packet;
-    int video_stream;
-    uint8_t *buffer;
+    virtual void *GetFrameBuffer(void) = 0;
+    virtual void SetNextFrame(AVPicture *in_frame) = 0;
+    virtual void Flip(void) = 0;
+    virtual bool ReadyForNextFrame(void) = 0;
+    virtual void SetSpeed(float new_speed) = 0;
+    virtual ~OutputAdapter( ) { }
 };
 
-class DecklinkOutput {
+
+#if defined(ENABLE_DECKLINK)
+
+#include "DeckLinkAPI.h"
+
+class DecklinkOutput : public OutputAdapter {
 public:
     DecklinkOutput(int cardIndex = 0) 
         : deckLink(0), deckLinkOutput(0), deckLinkIterator(0),
@@ -211,6 +88,16 @@ public:
         void *data;
         frame->GetBytes(&data);
         return data;
+    }
+
+    void SetNextFrame(AVPicture *in_frame) {
+        unsigned char *data_ptr;
+        int i;
+        frame->GetBytes(data_ptr);
+
+        for (i = 0; i < 480; ++i) {
+            memcpy(frame + 1440*i, in_frame->data[0] + in_frame->linesize[0]*i);
+        }
     }
 
     void Flip(void) {
@@ -274,11 +161,12 @@ protected:
     const char *string;
 
 };
+#endif
 
-class StdoutOutput {
+class StdoutOutput : public OutputAdapter {
 public:
-    StdoutOutput(int cardIndex = 0) {
-        data = malloc(2*720*480);
+    StdoutOutput( ) {
+        data = (uint8_t *)malloc(2*720*480);
         if (!data) {
             throw std::runtime_error("allocation failure");
         }
@@ -290,6 +178,14 @@ public:
 
     void *GetFrameBuffer(void) {
         return data;
+    }
+
+    void SetNextFrame(AVPicture *in_frame) {
+        int i;
+
+        for (i = 0; i < 480; ++i) {
+            memcpy(data + 1440*i, in_frame->data[0] + in_frame->linesize[0]*i, 1440);
+        }
     }
 
     void Flip(void) {
@@ -305,27 +201,23 @@ public:
     }
 
 protected:
-    void *data;
+    uint8_t *data;
 
 };
 
-#define MAX_OPEN_FILES 32
-lavc_decoder *open_files[MAX_OPEN_FILES] = {0};
+MmapBuffer *buffers[MAX_CHANNELS];
+int marks[MAX_CHANNELS];
+int play_offset;
 
 int socket_fd;
 struct sockaddr_in timecode_addr;
 
 int playout_source = 0;
-int timecode = 0;
 bool did_cut = false;
 bool paused = false;
 bool step = false;
-
-// send timecode update on UDP socket
-void update_timecode(void) {
-    sendto(socket_fd, &timecode, sizeof(timecode), 0, 
-        (struct sockaddr *)&timecode_addr, sizeof(timecode_addr));
-}
+bool step_backward = false;
+bool run_backward = false;
 
 void socket_setup(void) {
     struct sockaddr_in addr;
@@ -369,47 +261,38 @@ int try_receive(struct playout_command *cmd) {
     }
 }
 
-void close_open_files(void) {
-    for (int j = 0; j < MAX_OPEN_FILES && open_files[j]; ++j) {
-        delete open_files[j];
-        open_files[j] = 0;
-    }
-}
 
-void open_new_files(char *filenames) {
-    int j = 0;
-    // terminates on double null...
-    while (strlen(filenames) > 0) {
-        fprintf(stderr, "opening file... %s on slot %d\n", filenames, j);
-        open_files[j] = new lavc_decoder(filenames);
-        filenames += strlen(filenames) + 1;
-        ++j;
-    }
-}
 
-DecklinkOutput out;
+OutputAdapter *out;
 
 void parse_command(struct playout_command *cmd) {
     switch(cmd->cmd) {
-        case PLAYOUT_CMD_START_FILES:
-            close_open_files( );
-            open_new_files(cmd->filenames);
-            playout_source = cmd->source;
+        case PLAYOUT_CMD_CUE:
             did_cut = true;
-            timecode = 0;
-            out.SetSpeed(cmd->new_speed);
+            paused = true;
+            if (cmd->new_speed < 0) {
+                cmd->new_speed = -cmd->new_speed;
+                run_backward = true;
+            } else {
+                run_backward = false;
+            }
+            out->SetSpeed(cmd->new_speed);
+            memcpy(marks, cmd->marks, sizeof(marks));
+            play_offset = 0;
             break;
 
         case PLAYOUT_CMD_ADJUST_SPEED:
-            out.SetSpeed(cmd->new_speed);            
+            if (cmd->new_speed < 0) {
+                cmd->new_speed = -cmd->new_speed;
+                run_backward = true;
+            } else {
+                run_backward = false;
+            }
+            out->SetSpeed(cmd->new_speed);            
             break;
 
         case PLAYOUT_CMD_CUT_REWIND:
-            // rewind all the sources
-            for (int j = 0; j < MAX_OPEN_FILES && open_files[j]; ++j) {
-                open_files[j]->rewind( );
-            }
-            timecode = 0;
+            play_offset = 0;
             // fall through to the cut...
         case PLAYOUT_CMD_CUT:
             playout_source = cmd->source;
@@ -424,71 +307,95 @@ void parse_command(struct playout_command *cmd) {
             paused = false;
             break;
 
-        case PLAYOUT_CMD_STEP:
+        case PLAYOUT_CMD_STEP_FORWARD:
             step = true;
+            break;
+
+        case PLAYOUT_CMD_STEP_BACKWARD:
+            step_backward = true;
             break;
     }
 
     fprintf(stderr, "source is now... %d\n", playout_source);
 }
 
-decode_status advance_all_and_read_from(int source) {
-    decode_status result = FAILURE;
-    for (int j = 0; j < MAX_OPEN_FILES && open_files[j]; ++j) {
-        if (j == source) {
-            result = open_files[j]->read_frame(true);
-        } else {
-            // just skip the frame
-            open_files[j]->read_frame(false);
-        }
-    }
-    return result;
-}
-
 
 int main(int argc, char *argv[]) {
     struct playout_command cmd;
-    unsigned char *buf = (unsigned char *)malloc(2*720*480);
+    static uint8_t frame_data[MAX_FRAME_SIZE];
     bool next_frame_ready = false;
-    decode_status result;
+    int frame_size, i;
+
+    AVPicture *decoded_frame, *scaled_frame;
+
+    out = new StdoutOutput( );
+
+    // initialize decoder
+    FFwrapper::Decoder mjpeg_decoder( CODEC_ID_MJPEG );
+
+    // initialize scaler
+    FFwrapper::Scaler scaler(OUT_FRAME_W, OUT_FRAME_H, PIX_FMT_UYVY422); 
+
+    // initialize buffers
+    for (i = 0; i < argc - 1; ++i) {
+        buffers[i] = new MmapBuffer(argv[i + 1], MAX_FRAME_SIZE);
+    }
 
     socket_setup( );
-    av_register_all( );
 
     // toss up a black frame until we're ready to go
-    memset(out.GetFrameBuffer( ), 0, 2*720*480);
-    out.Flip( );
+    memset(out->GetFrameBuffer( ), 0, 2*720*480);
+    out->Flip( );
 
     // now, the interesting bits...
     while (1) {
         if (!next_frame_ready) {
             // Advance all streams one frame. Only decode on the one we care about.
             // (if nothing's open, this fails by design...)
-            if (!paused || step || did_cut) {
-                result = advance_all_and_read_from(playout_source);
-                if (result == SUCCESS) {
-                    open_files[playout_source]->copy_frame(out.GetFrameBuffer( ), 720, 480); 
-                    next_frame_ready = true;
+            if (!paused || step || step_backward || did_cut) {
+                frame_size = sizeof(frame_data);                
+                if (buffers[playout_source]->get(frame_data, &frame_size, marks[playout_source]+play_offset)) {
+                    try {
+                        decoded_frame = mjpeg_decoder.try_decode(frame_data, frame_size);
+                        if (decoded_frame) {
+                            scaled_frame = scaler.scale(decoded_frame, mjpeg_decoder.get_ctx( ));
+                            out->SetNextFrame(scaled_frame);
+                            next_frame_ready = true;
+                            if (step_backward || run_backward) {
+                                play_offset--;
+                            } else {
+                                play_offset++;
+                            }
+                        }
+                    } catch (FFwrapper::CodecError e) {
+                        fprintf(stderr, "codec error - pausing replay\n");
+                        paused = true;
+                    } catch (FFwrapper::AllocationError e) {
+                        fprintf(stderr, "out of memory - pausing replay\n");
+                        paused = true;
+                    }
+                } else {
+                    fprintf(stderr, "off end of available video - pausing\n");
+                    paused = true;
                 }
-                step = false;
-                did_cut = false;
 
-                if (result != END_OF_FILE) {
-                    ++timecode;
-                    update_timecode( );
+                if (step) {
+                    step = false;
                 }
 
+                if (step_backward) {
+                    step_backward = false;
+                }
             }
 
         }
 
-        /* else */ if (out.ReadyForNextFrame( ) && next_frame_ready) {
-            out.Flip( );
+        if (out->ReadyForNextFrame( ) && next_frame_ready) {
+            out->Flip( );
             next_frame_ready = false;
         } 
         
         if (try_receive(&cmd)) {
-            fprintf(stderr, "receivin shits...\n");
             parse_command(&cmd);
         } else {
             // nothing to do, go to sleep...
