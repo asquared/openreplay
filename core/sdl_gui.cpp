@@ -49,6 +49,7 @@ int *marks, *replay_ptrs, *replay_ends;
 
 #define MIN_SPEED -20
 #define MAX_SPEED 15
+#define SEEK_STEP 15 // 1/2 second steps
 
 // Preroll frames from mark
 int preroll = 150;
@@ -62,7 +63,7 @@ int playout_timecode = 0;
 #define PVW_FPF 3
 
 
-enum _display_mode { PREVIEW, LIVE } display_mode;
+enum _display_mode { PREVIEW, LIVE, SEEK_MARK, SEEK_START } display_mode;
 
 int socket_fd;
 struct sockaddr_in daemon_addr;
@@ -307,6 +308,18 @@ void update_playout_timecode(void) {
     }
 }
 
+void seek_mark_back(void) {
+    for (int j = 0; j < n_buffers; ++j) {
+        marks[j] -= SEEK_STEP;
+    }
+}
+
+void seek_mark_forward(void) {
+    for (int j = 0; j < n_buffers; ++j) {
+        marks[j] += SEEK_STEP;
+    }
+}
+
 int main(int argc, char *argv[])
 {
         int x, y, j;
@@ -393,7 +406,12 @@ int main(int argc, char *argv[])
                     if (replay_ptrs[j] >= replay_ends[j]) {
                         display_mode = LIVE;
                     }
+                } else if (display_mode == SEEK_MARK) {
+                    draw_frame(buffers[j], x, y, marks[j]);
+                } else if (display_mode == SEEK_START) {
+                    draw_frame(buffers[j], x, y, marks[j] - preroll);
                 }
+
 
                 x += frame_buf->w;
                 if (x + frame_buf->w > screen->w) {
@@ -594,6 +612,24 @@ int main(int argc, char *argv[])
                             
 
                             break;
+
+
+                        case SDLK_F5:
+                            seek_mark_back( );
+                            break;
+
+                        case SDLK_F6:
+                            seek_mark_forward( );
+                            break;
+
+                        case SDLK_F7:
+                            display_mode = SEEK_START;
+                            break;
+
+                        case SDLK_F8:
+                            display_mode = SEEK_MARK;
+                            break;
+
 
                         case SDLK_F9:
                             do_playout_cmd(PLAYOUT_CMD_PAUSE);
