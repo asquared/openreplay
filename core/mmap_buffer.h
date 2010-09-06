@@ -10,7 +10,7 @@ typedef int timecode_t;
 
 class MmapBuffer {
     public:
-    MmapBuffer(const char *file, unsigned int record_size, bool reset = false);
+    MmapBuffer(const char *file, unsigned int record_size, bool writer = false);
     ~MmapBuffer( ); 
     timecode_t put(const void *data, size_t size);
     bool get(void *data, size_t *size, timecode_t timecode);
@@ -36,11 +36,18 @@ class MmapBuffer {
             uint32_t magic;
             offset_t max_offset;
             recsize_t record_size;
-            sem_t sem;
+
+            pid_t lock_pid;
     } *mmapped_ipc;
+
+    void lock( );
+    void unlock( );
+    void check_lock( );
 
     int data_fd;
     int n_records;
+
+    pid_t my_pid; // fork( ) unsafe
 };
 
 #endif

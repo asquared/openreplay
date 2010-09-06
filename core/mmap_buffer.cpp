@@ -17,6 +17,10 @@
 #include <memory.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
+
+/* cycles of the spinlock loop before we think to write it off as a dead process */
+#define DEADLOCK_THRESHOLD 1000000
 
 /*
  * appropriate given the hour of the night at which I wrote most of this...
@@ -40,6 +44,8 @@ MmapBuffer::MmapBuffer(const char *file, unsigned int record_size, bool reset) {
     mmapped_ipc = NULL;
     mmapped_data = NULL;
 
+    my_pid = getpid( );
+
     if (record_size % RINGBUF_ALIGN_BOUNDARY != 0) {
         // round up to the next highest aligned size
         record_size = (record_size / RINGBUF_ALIGN_BOUNDARY + 1) * RINGBUF_ALIGN_BOUNDARY;
@@ -60,20 +66,22 @@ MmapBuffer::MmapBuffer(const char *file, unsigned int record_size, bool reset) {
     mmapped_ipc = (struct control_data *)
         mmap(NULL, sizeof(struct control_data), PROT_READ | PROT_WRITE, MAP_SHARED, data_fd, 0);
 
-    if (mmapped_ipc == 0) {
+    if (mmapped_ipc == MAP_FAILED) {\
+        perror("mmap");
         throw std::runtime_error("Failed to mmap shared state");
     }
 
 
     if (mmapped_ipc->magic != MAGIC || reset) {
         // we're the first one here. we must be the source...
+        // note this also will forcibly unlock any old locks... for better or worse.
+        mmapped_ipc->lock_pid = my_pid;
         mmapped_ipc->magic = MAGIC;
         mmapped_ipc->record_size = record_size;
         mmapped_ipc->current_timecode = -1;
         mmapped_ipc->current_offset = 0;
         mmapped_ipc->max_offset = (statbuf.st_size - RINGBUF_ALIGN_BOUNDARY);
-        // initialize the semaphore
-        sem_init((sem_t *)&mmapped_ipc->sem, 1, 1);
+        mmapped_ipc->lock_pid = 0;
     }
 
     n_records = mmapped_ipc->max_offset / mmapped_ipc->record_size;
@@ -84,13 +92,16 @@ MmapBuffer::MmapBuffer(const char *file, unsigned int record_size, bool reset) {
     mmapped_data = (char *)
         mmap(0, mmapped_ipc->max_offset, PROT_READ | PROT_WRITE, MAP_SHARED, data_fd, RINGBUF_ALIGN_BOUNDARY);
 
+    if (mmapped_data == MAP_FAILED) {
+        perror("mmap");
+        throw std::runtime_error("Failed to mmap data buffer");         
+    }
+
     if (madvise((void *)mmapped_data, mmapped_ipc->max_offset, MADV_SEQUENTIAL) < 0) {
         perror("warning: madvise failed");
     }
 
-    if (mmapped_data == NULL) {
-        throw std::runtime_error("Failed to mmap data buffer");         
-    }
+
 }
 
 // Clean up the memory mappings.
@@ -106,6 +117,47 @@ MmapBuffer::~MmapBuffer( ) {
     if (-1 != data_fd) {
         close(data_fd);
     }
+}
+
+void MmapBuffer::lock( ) {
+    int counter = 0;
+    while (__sync_bool_compare_and_swap(&(mmapped_ipc->lock_pid), 0, my_pid)) {
+        ++counter;
+        if (counter == DEADLOCK_THRESHOLD) {
+            fprintf(stderr, "maybe deadlocked (held by pid %d)\n", mmapped_ipc->lock_pid);
+        }
+        if (counter > DEADLOCK_THRESHOLD) {
+            check_lock( );
+        }
+    }
+}
+
+void MmapBuffer::check_lock( ) {
+    char buffer[256];
+    struct stat st;
+    int ret;
+
+    pid_t holding_pid = mmapped_ipc->lock_pid;
+    snprintf(buffer, sizeof(buffer) - 1, "/proc/%d", holding_pid);
+    buffer[sizeof(buffer) - 1] = 0;
+
+    ret = stat(buffer, &st);
+
+    if (ret < 0) {
+        // ENOENT = process not alive
+        if (errno == ENOENT) {
+            fprintf(stderr, "process %d holding lock seems dead, trying to forcibly unlock...\n", holding_pid);
+            if (__sync_bool_compare_and_swap(&(mmapped_ipc->lock_pid), holding_pid, 0)) {
+                fprintf(stderr, "... and, we're back!\n");
+            } else {
+                fprintf(stderr, "someone else got there first. Oh well.\n");
+            }
+        }
+    }
+}
+
+void MmapBuffer::unlock( ) {
+    mmapped_ipc->lock_pid = 0;
 }
 
 timecode_t MmapBuffer::put(const void *data, size_t size) {
@@ -128,23 +180,17 @@ timecode_t MmapBuffer::put(const void *data, size_t size) {
     memcpy(rec->data, data, size);
 
     /* update the pointer and timecode values */
-    if (sem_wait((sem_t *)&mmapped_ipc->sem) < 0) {
-        perror("Locking semaphore");
-    }
+    lock( );
     mmapped_ipc->current_offset = save_offset;
     mmapped_ipc->current_timecode = save_timecode;
-    if (sem_post((sem_t *)&mmapped_ipc->sem) < 0) {
-        perror("Unlocking semaphore");
-    }
+    unlock( );
     return mmapped_ipc->current_timecode;
 }
 
 bool MmapBuffer::get(void *data, size_t *size, timecode_t timecode) {
     struct record *rec;
     
-    if (sem_wait((sem_t *)&mmapped_ipc->sem) < 0) {
-        perror("Locking semaphore");
-    }
+    lock( );
 
     if (
         mmapped_ipc->current_timecode < timecode 
@@ -152,9 +198,7 @@ bool MmapBuffer::get(void *data, size_t *size, timecode_t timecode) {
         || mmapped_ipc->current_timecode == -1
         || timecode < 0
     ) {
-        if (sem_post((sem_t *)&mmapped_ipc->sem) < 0) {
-            perror("Unlocking semaphore");
-        }
+        unlock( );
         return false;
     }
 
@@ -176,15 +220,11 @@ bool MmapBuffer::get(void *data, size_t *size, timecode_t timecode) {
 
     // got the wrong data somehow (maybe it was overwritten just now)
     if (rec->timecode != timecode || !rec->valid) {
-        if (sem_post((sem_t *)&mmapped_ipc->sem) < 0) {
-            perror("Unlocking semaphore");
-        }
+        unlock( );
         return false;
     }
 
-    if (sem_post((sem_t *)&mmapped_ipc->sem) < 0) {
-        perror("Unlocking semaphore");
-    }
+    unlock( );
 
 
     memcpy(data, rec->data, *size);
