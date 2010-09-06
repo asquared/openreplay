@@ -30,6 +30,8 @@ SDL_Surface *screen, *frame_buf, *font;
 #define FONT_CELL_H 20
 #define FONT_START ' '
 
+#define JOYSTICK_SPEED 2.0f
+
 MmapBuffer **buffers;
 int n_buffers;
 int clip_no = 0;
@@ -129,19 +131,6 @@ void mark(void) {
     }
 }
 
-void preview(void) {
-    int j;
-    for (j = 0; j < n_buffers; ++j) {
-        replay_ptrs[j] = marks[j] - preroll;
-        replay_ends[j] = marks[j] + postroll;
-    }
-
-    display_mode = PREVIEW;
-}
-
-void return_to_live(void) {
-    display_mode = LIVE;
-}
 
 const char *timecode_fmt(int timecode) {
     int hr, min, sec, fr;
@@ -217,7 +206,7 @@ void line_of_text(int *x, int *y, const char *fmt, ...) {
 }
 
 
-void start_playout(void) {
+void cue_playout(void) {
     int j;
 
     struct playout_command cmd;
@@ -320,15 +309,137 @@ void seek_mark_forward(void) {
     }
 }
 
+void preroll_up(int amount) {
+    preroll += amount;
+}
+
+void preroll_down(int amount) {
+    preroll -= amount;
+    if (preroll < 0) {
+        preroll = 0;
+    }
+}
+
+void preroll_set(int value) {
+    if (value > 0) {
+        preroll = value;
+    } else {
+        preroll = 0;
+    }
+}
+
+void postroll_set(int value) {
+    if (value > 0) {
+        postroll = value;
+    } else {
+        postroll = 0;
+    }
+}
+
+void postroll_up(int amount) {
+    postroll += amount;
+}
+
+void postroll_down(int amount) {
+    postroll -= amount;
+    if (postroll < 0) {
+        postroll = 0;
+    }
+}
+
+void playout_speed_up(int amount) {
+    qreplay_speed += amount;
+    if (qreplay_speed > MAX_SPEED) {
+        qreplay_speed = MAX_SPEED;
+    }
+}
+
+void playout_speed_down(int amount) {
+    qreplay_speed -= amount;
+    if (qreplay_speed < MIN_SPEED) {
+        qreplay_speed = MIN_SPEED;
+    }
+}
+
+void playout_speed_set(int new_speed) {
+    qreplay_speed = new_speed;
+    if (qreplay_speed > MAX_SPEED) {
+        qreplay_speed = MAX_SPEED;
+    }
+    if (qreplay_speed < MIN_SPEED) {
+        qreplay_speed = MIN_SPEED;
+    }
+}
+
+void playout_speed_live_change(void) {
+    adjust_speed(qreplay_speed/10.0f);
+}
+
+/* note that this takes the 1-based camera number */
+void camera_set(int camera) {
+    if (camera > 0 && camera <= n_buffers) {
+        qreplay_cam = camera - 1;
+    }
+}
+
+int camera_get(void) {
+    return qreplay_cam;
+}
+
+void display_mode_seek_start(void) {
+    display_mode = SEEK_START;
+}
+
+void display_mode_seek_mark(void) {
+    display_mode = SEEK_MARK;
+}
+
+void display_mode_preview(void) {
+    int j;
+    for (j = 0; j < n_buffers; ++j) {
+        replay_ptrs[j] = marks[j] - preroll;
+        replay_ends[j] = marks[j] + postroll;
+    }
+
+    display_mode = PREVIEW;
+}
+
+void display_mode_live(void) {
+    display_mode = LIVE;
+}
+
+int input;
+
+int consume_numeric_input(void) {
+    int temp = input;
+    input = 0;
+    return temp;
+}
+
+float joy_integrate;
+bool joyseek_enabled;
+void joyseek_begin(void) {
+    joy_integrate = 0;
+}
+
+float joyseek_get(void) {
+    return joy_integrate;
+}
+
+void joyseek_adj(float how_much) {
+    joy_integrate -= how_much;
+}
+
+void joyseek_update(Sint16 axis_value, float speed) {
+    joy_integrate += (axis_value / 32768.0 * speed);
+}
+
 int main(int argc, char *argv[])
 {
         int x, y, j;
-        int last_logged = -1;
         int flag = 0;
-        int playout_clip = 0;
-        int input = 0;
-
-        bool already_selected = false, tally_flag = false;
+        input = 0;
+        joyseek_enabled = false;
 
         SDL_Event evt;
         SDL_Joystick *game_port = 0;
@@ -375,7 +486,10 @@ int main(int argc, char *argv[])
         game_port = SDL_JoystickOpen(0);
         if (!game_port) {
             fprintf(stderr, "No joystick found. Auto-control will probably not work.\n");
+        } else {
+            SDL_JoystickEventState(SDL_ENABLE);
         }
+
 
         screen = SDL_SetVideoMode(1920, 480*2, 24, SDL_HWSURFACE | SDL_DOUBLEBUF);
         if (!screen) {
@@ -398,6 +512,7 @@ int main(int argc, char *argv[])
             x = 0;
             y = 0;
             for (j = 0; j < n_buffers; j++) {
+                /* Draw frames as appropriate for the current mode. */
                 if (display_mode == LIVE) {
                     draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1); 
                 } else if (display_mode == PREVIEW) {
@@ -420,6 +535,11 @@ int main(int argc, char *argv[])
                 }
             }
 
+            // update joystick axis
+            if (game_port) {
+                joyseek_update(SDL_JoystickGetAxis(game_port, 2), JOYSTICK_SPEED); // the twisty axis?
+            }
+
             // Try to update the timecode
             update_playout_timecode( );
 
@@ -433,6 +553,12 @@ int main(int argc, char *argv[])
             } else if (display_mode == PREVIEW) {
                 line_of_text(&x, &y, "REPLAY PREVIEW");
                 line_of_text(&x, &y, "%s", timecode_fmt(replay_ptrs[0] - (marks[0] - preroll)));
+            } else if (display_mode == SEEK_MARK) {
+                line_of_text(&x, &y, "MARKED FRAME");
+                line_of_text(&x, &y, "");
+            } else if (display_mode == SEEK_START) {
+                line_of_text(&x, &y, "PLAYOUT START FRAME");
+                line_of_text(&x, &y, "");
             }
                 
             line_of_text(&x, &y, "PLAYOUT: %s", timecode_fmt(playout_timecode));
@@ -451,28 +577,35 @@ int main(int argc, char *argv[])
             line_of_text(&x, &y, "AUTOTAKE [PgDn]");
             line_of_text(&x, &y, "AUTOTAKE + REWIND [Alt+PgDn]");
 
-            // Interface to a video switcher via the game port.
-            if (game_port && SDL_JoystickGetButton(game_port, 0) && !already_selected) {
-                fprintf(stderr, "button was pushed\n");
-                already_selected = true;
-                tally_flag = true;
-            }
-
-            if (game_port && !SDL_JoystickGetButton(game_port, 0)) {
-                fprintf(stderr, "no button pushed\n");
-                already_selected = false;
-                tally_flag = false;
-            }
-
-            if (tally_flag) {
-                fprintf(stderr, "Hey! The director took my replay! Let's roll...\n");
-                do_playout_cmd(PLAYOUT_CMD_RESUME);
-                tally_flag = false;
+            // Seek with the joystick...
+            if (joyseek_enabled) {
+                if (joyseek_get( ) > 1) {
+                    joyseek_adj(1.0f);
+                    seek_mark_forward( );
+                } else {
+                    joyseek_adj(-1.0f);
+                    seek_mark_back( );
+                }
             }
 
             // Event Processing
             if (SDL_PollEvent(&evt)) {
-                if (evt.type == SDL_KEYDOWN) {
+                if (evt.type == SDL_JOYBUTTONDOWN) {
+                    // map joystick buttons onto actions (or just print stuff)
+                    fprintf(stderr, "joystick %d button %d\n", evt.jbutton.which, evt.jbutton.button);
+                    if (evt.jbutton.button == 2) {
+                        fprintf(stderr, "joystick seek: on");
+                        joyseek_begin( );
+                        joyseek_enabled = true;
+                    } else if (evt.jbutton.button == 7) {
+                        fprintf(stderr, "tally input activated - playing");
+                        do_playout_cmd(PLAYOUT_CMD_RESUME);
+                    }
+                } else if (evt.type == SDL_JOYBUTTONUP) {
+                    if (evt.jbutton.button == 2) {
+                        joyseek_enabled = false;
+                    }
+                } else if (evt.type == SDL_KEYDOWN) {
                     switch (evt.key.keysym.sym) {
                         case SDLK_KP0:
                         case SDLK_KP1:
@@ -487,6 +620,7 @@ int main(int argc, char *argv[])
                             input *= 10;
                             input += (evt.key.keysym.unicode - L'0');
                             break;
+
                         case SDLK_m:
                         case SDLK_KP_PLUS:
                             mark( );
@@ -494,106 +628,86 @@ int main(int argc, char *argv[])
 
                         case SDLK_INSERT:
                         case SDLK_p:
-                            preview( );
+                            display_mode_preview( );
                             break;
+
                         case SDLK_HOME:
                         case SDLK_l:
-                            return_to_live( );
+                            display_mode_live( );
                             break;
 
                         case SDLK_q:
-                            preroll += 5;
+                            preroll_up(5);
                             break;
                         case SDLK_w:
-                            preroll -= 5;
-                            if (preroll < 0) {
-                                preroll = 0;
-                            }
+                            preroll_down(5);
                             break;
+
                         case SDLK_e:
-                            preroll = input;
+                            preroll_set(consume_numeric_input( ));
                             input = 0;
                             break;
 
                         case SDLK_a:
-                            postroll += 5;
+                            postroll_up(5);
                             break;
+
                         case SDLK_s:
-                            postroll -= 5;
-                            if (postroll < 0) {
-                                postroll = 0;
-                            }
+                            postroll_down(5);
                             break;
+
                         case SDLK_d:
-                            postroll = input;
-                            input = 0;
+                            postroll_set(consume_numeric_input( ));
                             break;
 
                         case SDLK_z:
                         case SDLK_KP_DIVIDE:
-                            qreplay_speed++;
-                            if (qreplay_speed > MAX_SPEED) {
-                                qreplay_speed = MAX_SPEED;
-                            }
+                            playout_speed_up(1);
                             if (!(evt.key.keysym.mod & KMOD_CTRL)) {
-                                adjust_speed(qreplay_speed/10.0f);
+                                playout_speed_live_change( );
                             }
                             break;
+
+
                         case SDLK_x:
                         case SDLK_KP_MULTIPLY:
-                            qreplay_speed--;
-                            if (qreplay_speed < MIN_SPEED) {
-                                qreplay_speed = MIN_SPEED;
-                            }
+                            playout_speed_down(1);
                             if (!(evt.key.keysym.mod & KMOD_CTRL)) {
-                                adjust_speed(qreplay_speed/10.0f);
+                                playout_speed_live_change( );
                             }
+
                             break;
                         case SDLK_c:
-                            qreplay_speed = input;
-                            input = 0;
-                            if (qreplay_speed > MAX_SPEED) {
-                                qreplay_speed = MAX_SPEED;
-                            }
-
-                            if (qreplay_speed < MIN_SPEED) {
-                                qreplay_speed = MIN_SPEED;
-                            }
+                            playout_speed_set(consume_numeric_input( ));
                             if (!(evt.key.keysym.mod & KMOD_CTRL)) {
                                 adjust_speed(qreplay_speed/10.0f);
                             }
-                            break;
-
-                        case SDLK_KP_PERIOD:
-                            if (input <= last_logged) {
-                                playout_clip = input;
-                            }
-                            input = 0;
                             break;
 
                         case SDLK_SPACE:
+                            cue_playout( );
+                            do_playout_cmd(PLAYOUT_CMD_RESUME);
+                            break;
+
                         case SDLK_KP_ENTER:
-                            start_playout( );
+                            cue_playout( );
                             break;
 
                         case SDLK_PAGEUP:
-                            if (input > 0 && input - 1 < n_buffers) {
-                                qreplay_cam = input - 1; 
-                            }
-                            input = 0;
+                            camera_set(consume_numeric_input( ));
                             break;
 
                         case SDLK_PAGEDOWN:
                             // if alt key was pushed, do a live cut, but also rewind the clips.
                             if (evt.key.keysym.mod & KMOD_ALT) {
-                                live_cut_and_rewind(qreplay_cam);
+                                live_cut_and_rewind(camera_get( ));
                             } else {
-                                live_cut(qreplay_cam);
+                                live_cut(camera_get( ));
                             }
                             break;
 
                         case SDLK_END:
-                            live_cut_and_rewind(qreplay_cam);
+                            live_cut_and_rewind(camera_get( ));
                             break;
 
                         case SDLK_1:
@@ -605,12 +719,7 @@ int main(int argc, char *argv[])
                         case SDLK_7:
                         case SDLK_8:
                         case SDLK_9:
-                            qreplay_cam = (evt.key.keysym.unicode - L'0' - 1);
-                            if (qreplay_cam >= n_buffers) {
-                                qreplay_cam = n_buffers - 1;
-                            }
-                            
-
+                            camera_set(evt.key.keysym.unicode - L'0' - 1);
                             break;
 
 
@@ -623,11 +732,11 @@ int main(int argc, char *argv[])
                             break;
 
                         case SDLK_F7:
-                            display_mode = SEEK_START;
+                            display_mode_seek_start( );
                             break;
 
                         case SDLK_F8:
-                            display_mode = SEEK_MARK;
+                            display_mode_seek_mark( );
                             break;
 
 
