@@ -356,6 +356,7 @@ int main(int argc, char *argv[]) {
             // (if nothing's open, this fails by design...)
             if (!paused || step || step_backward || did_cut) {
                 frame_size = sizeof(frame_data);                
+                did_cut = false;
                 if (buffers[playout_source]->get(frame_data, &frame_size, marks[playout_source]+play_offset)) {
                     try {
                         decoded_frame = mjpeg_decoder.try_decode(frame_data, frame_size);
