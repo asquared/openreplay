@@ -375,6 +375,10 @@ void playout_speed_live_change(void) {
     adjust_speed(qreplay_speed/10.0f);
 }
 
+void playout_speed_reverse(void) {
+    playout_speed_set(-qreplay_speed);
+}
+
 /* note that this takes the 1-based camera number */
 void camera_set(int camera) {
     if (camera > 0 && camera <= n_buffers) {
@@ -680,7 +684,7 @@ int main(int argc, char *argv[])
                         case SDLK_c:
                             playout_speed_set(consume_numeric_input( ));
                             if (!(evt.key.keysym.mod & KMOD_CTRL)) {
-                                adjust_speed(qreplay_speed/10.0f);
+                                playout_speed_live_change( );
                             }
                             break;
 
@@ -722,6 +726,13 @@ int main(int argc, char *argv[])
                             camera_set(evt.key.keysym.unicode - L'0' - 1);
                             break;
 
+
+                        case SDLK_F4:
+                            playout_speed_reverse( );
+                            if (!(evt.key.keysym.mod & KMOD_CTRL)) {
+                                playout_speed_live_change( );
+                            }
+                            break;
 
                         case SDLK_F5:
                             seek_mark_back( );
