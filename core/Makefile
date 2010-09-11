@@ -16,8 +16,8 @@ mjpeg_ingest: mjpeg_ingest.cpp mmap_buffer.cpp
 decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o decklink_capture decklink_capture.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS)
 
-bmdplayoutd: bmdplayoutd.cpp ffwrapper.cpp mmap_buffer.cpp
-	$(CC) -o bmdplayoutd bmdplayoutd.cpp ffwrapper.cpp mmap_buffer.cpp $(CFLAGS) $(LDFLAGS) $(LAVC_INCLUDES) $(LAVC_LIBS) $(FFCFLAGS) $(FFLDFLAGS)
+playoutd: playoutd.cpp ffwrapper.cpp mmap_buffer.cpp
+	$(CC) -o playoutd playoutd.cpp ffwrapper.cpp mmap_buffer.cpp $(CFLAGS) $(LDFLAGS) $(LAVC_INCLUDES) $(LAVC_LIBS) $(FFCFLAGS) $(FFLDFLAGS)
 
 clean:
 	rm -f raw_ingest ingest output
