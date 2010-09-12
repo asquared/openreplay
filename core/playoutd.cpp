@@ -26,7 +26,6 @@ public:
     virtual void SetNextFrame(AVPicture *in_frame) = 0;
     virtual void Flip(void) = 0;
     virtual bool ReadyForNextFrame(void) = 0;
-    virtual void SetSpeed(float new_speed) = 0;
     virtual ~OutputAdapter( ) { }
 };
 
@@ -37,9 +36,13 @@ public:
 
 class DecklinkOutput : public OutputAdapter {
 public:
+    // Magic framerate divisors for NTSC: timebase = 30000 ticks per second, frame duration = 1001 ticks
+    // Magic framerate divisors for PAL 25FPS: timebase = 25 ticks per second, frame duration =  1 tick
+    // (I wish I was in Europe. This API would seem so much more elegant over there.)
     DecklinkOutput(int cardIndex = 0) 
         : deckLink(0), deckLinkOutput(0), deckLinkIterator(0),
-          displayMode(0), deckLinkConfig(0), frame_duration(66)
+          displayMode(0), deckLinkConfig(0), frame_duration(1001), time_base(30000), 
+          frame_counter(0), ready_frame(true)
     {
         deckLinkIterator = CreateDeckLinkIteratorInstance( ); 
 	/* Connect to DeckLink card */
@@ -64,13 +67,6 @@ public:
             throw std::runtime_error("Failed to get IDeckLinkOutput interface"); 
         }
 
-	if (deckLink->QueryInterface(IID_IDeckLinkConfiguration, (void**)&deckLinkConfig) != S_OK) {
-            throw std::runtime_error("Failed to get IDeckLinkConfiguration interface");
-        }
-
-	// configure output
-	deckLinkConfig->SetVideoOutputFormat(bmdVideoConnectionComposite);
-
 	// Create frame object
 	if (
             deckLinkOutput->CreateVideoFrame(
@@ -80,9 +76,17 @@ public:
 		throw std::runtime_error("Failed to create frame");
 	}
 
+
 	// enable video output
 	deckLinkOutput->EnableVideoOutput(bmdModeNTSC, bmdVideoOutputFlagDefault);
+
+        deckLinkOutput->SetScheduledFrameCompletionCallback(callback_obj);
+
+        // Preroll a few black frames(??)
+        schedule_next_frame( );
+        deckLinkOutput->StartScheduledPlayback(0, time_base, 1.0)
     }
+
 
     void *GetFrameBuffer(void) {
         void *data;
@@ -91,6 +95,9 @@ public:
     }
 
     void SetNextFrame(AVPicture *in_frame) {
+        // INTERESTING QUESTION: Does modifying a frame that has been 
+        // scheduled have an effect on the output? The API documentation
+        // is bad enough, that I don't really know.
         unsigned char *data_ptr;
         int i;
         frame->GetBytes(data_ptr);
@@ -101,16 +108,13 @@ public:
     }
 
     void Flip(void) {
-        update_time( );
-        frame_start = time_now;
-        if (deckLinkOutput->DisplayVideoFrameSync(frame) != S_OK) {
-            fprintf(stderr, "warning: frame display failed\n");
-        }
+        // just let the callback do the work??
+        //schedule_next_frame( );
+        ready_frame = false;
     }
 
     bool ReadyForNextFrame(void) {
-        update_time( );
-        return (time_now > frame_start + frame_duration);
+        return ready_frame;
     }
 
     ~DecklinkOutput(void) {
@@ -136,15 +140,48 @@ public:
             
     }
 
-    void SetSpeed(float speed) {
-        frame_duration = 1000 / ( (float) FRAMES_PER_SEC * speed);
-    }
-
 
 protected:
-    void update_time(void) {
-        BMDTimeValue time_in_frame, ticks_per_frame; // don't give a damn about these
-        deckLinkOutput->GetHardwareReferenceClock(1000, &time_now, &time_in_frame, &ticks_per_frame);
+    void schedule_next_frame(void) {
+        deckLinkOutput->ScheduleVideoFrame(frame, frame_counter * frame_duration, frame_duration, time_base);
+        frame_counter++;
+    }
+
+    class MyCallback : public IDeckLinkOutputCallback {
+        public:
+            MyCallback(DecklinkOutput *_owner) : owner(_owner) { }
+            HRESULT ScheduledFrameCompleted(IDeckLinkVideoFrame *completed_frame, BMDOutputFrameCompletionResult result) {
+                switch (result) {
+                    case bmdOutputFrameDisplayedLate:
+                        fprintf(stderr, "WARNING: Decklink displayed frame late (running too slow!)\r\n");
+                        break;
+                    case bmdOutputFrameDropped:
+                        fprintf(stderr, "WARNING: Decklink dropped frame\r\n");
+                        break;
+                    case bmdOutputFrameFlushed:
+                        fprintf(stderr, "WARNING: Decklink flushed frame\r\n");
+                        break;
+                    default:
+                        break;
+                }
+                owner->ScheduledFrameCompleted( );
+                return S_OK;
+            }
+            HRESULT ScheduledPlaybackHasStopped(void) {
+                owner->ScheduledPlaybackStopped( );
+                return S_OK;
+            }
+        protected:
+            DecklinkOutput *owner;
+    } callback_obj;
+
+    void ScheduledFrameCompleted(void) {
+        schedule_next_frame( );
+        ready_frame = true;
+    }
+
+    void ScheduledPlaybackHasStopped(void) {
+        fprintf(stderr, "WARNING: Scheduled playback stopped unexpectedly!\n");
     }
 
     // lots of variables...
@@ -156,9 +193,14 @@ protected:
     IDeckLinkMutableVideoFrame *frame;
     BMDTimeValue frame_start, time_now;
 
-    int frame_duration; 
+    BMDTimeValue frame_duration;
+    BMDTimeScale time_base;
+    int frame_counter;
+
+
     HRESULT	result;
     const char *string;
+    bool ready_frame;
 
 };
 #endif
@@ -196,10 +238,6 @@ public:
         return true;
     }
 
-    void SetSpeed(float speed) {
-        // stdout has no speed control, so don't do anything
-    }
-
 protected:
     uint8_t *data;
 
@@ -207,7 +245,7 @@ protected:
 
 MmapBuffer *buffers[MAX_CHANNELS];
 int marks[MAX_CHANNELS];
-int play_offset;
+float play_offset;
 
 int socket_fd;
 struct sockaddr_in timecode_addr;
@@ -218,6 +256,7 @@ bool paused = false;
 bool step = false;
 bool step_backward = false;
 bool run_backward = false;
+float playout_speed;
 
 void socket_setup(void) {
     struct sockaddr_in addr;
@@ -270,30 +309,18 @@ void parse_command(struct playout_command *cmd) {
         case PLAYOUT_CMD_CUE:
             did_cut = true;
             paused = true;
-            if (cmd->new_speed < 0) {
-                cmd->new_speed = -cmd->new_speed;
-                run_backward = true;
-            } else {
-                run_backward = false;
-            }
-            out->SetSpeed(cmd->new_speed);
+            playout_speed = cmd->new_speed;
             memcpy(marks, cmd->marks, sizeof(marks));
-            play_offset = 0;
+            play_offset = 0.0f;
             playout_source = cmd->source;
             break;
 
         case PLAYOUT_CMD_ADJUST_SPEED:
-            if (cmd->new_speed < 0) {
-                cmd->new_speed = -cmd->new_speed;
-                run_backward = true;
-            } else {
-                run_backward = false;
-            }
-            out->SetSpeed(cmd->new_speed);            
+            playout_speed = cmd->new_speed;
             break;
 
         case PLAYOUT_CMD_CUT_REWIND:
-            play_offset = 0;
+            play_offset = 0.0f;
             // fall through to the cut...
         case PLAYOUT_CMD_CUT:
             playout_source = cmd->source;
@@ -321,12 +348,14 @@ void parse_command(struct playout_command *cmd) {
 }
 
 
+
 int main(int argc, char *argv[]) {
     struct playout_command cmd;
     static uint8_t frame_data[MAX_FRAME_SIZE];
     bool next_frame_ready = false;
     int i;
     size_t frame_size;
+    timecode_t frame_no;
 
     AVPicture *decoded_frame, *scaled_frame;
 
@@ -357,17 +386,20 @@ int main(int argc, char *argv[]) {
             if (!paused || step || step_backward || did_cut) {
                 frame_size = sizeof(frame_data);                
                 did_cut = false;
-                if (buffers[playout_source]->get(frame_data, &frame_size, marks[playout_source]+play_offset)) {
+                frame_no = marks[playout_source] + play_offset; // round to nearest whole frame
+                if (buffers[playout_source]->get(frame_data, &frame_size, frame_no)) {
                     try {
                         decoded_frame = mjpeg_decoder.try_decode(frame_data, frame_size);
                         if (decoded_frame) {
                             scaled_frame = scaler.scale(decoded_frame, mjpeg_decoder.get_ctx( ));
                             out->SetNextFrame(scaled_frame);
                             next_frame_ready = true;
-                            if (step_backward || run_backward) {
+                            if (step) {
+                                play_offset++;
+                            } else if (step_backward) {
                                 play_offset--;
                             } else {
-                                play_offset++;
+                                play_offset += playout_speed;
                             }
                         }
                     } catch (FFwrapper::CodecError e) {
