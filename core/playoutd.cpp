@@ -42,7 +42,7 @@ public:
     DecklinkOutput(int cardIndex = 0) 
         : deckLink(0), deckLinkOutput(0), deckLinkIterator(0),
           displayMode(0), deckLinkConfig(0), frame_duration(1001), time_base(30000), 
-          frame_counter(0), ready_frame(true)
+          frame_counter(0), ready_frame(true), callback_obj(this)
     {
         deckLinkIterator = CreateDeckLinkIteratorInstance( ); 
 	/* Connect to DeckLink card */
@@ -80,11 +80,11 @@ public:
 	// enable video output
 	deckLinkOutput->EnableVideoOutput(bmdModeNTSC, bmdVideoOutputFlagDefault);
 
-        deckLinkOutput->SetScheduledFrameCompletionCallback(callback_obj);
+        deckLinkOutput->SetScheduledFrameCompletionCallback(&callback_obj);
 
         // Preroll a few black frames(??)
         schedule_next_frame( );
-        deckLinkOutput->StartScheduledPlayback(0, time_base, 1.0)
+        deckLinkOutput->StartScheduledPlayback(0, time_base, 1.0);
     }
 
 
@@ -100,10 +100,10 @@ public:
         // is bad enough, that I don't really know.
         unsigned char *data_ptr;
         int i;
-        frame->GetBytes(data_ptr);
+        frame->GetBytes((void **) &data_ptr);
 
         for (i = 0; i < 480; ++i) {
-            memcpy(frame + 1440*i, in_frame->data[0] + in_frame->linesize[0]*i);
+            memcpy(frame + 1440*i, in_frame->data[0] + in_frame->linesize[0]*i, 1440);
         }
     }
 
@@ -142,12 +142,30 @@ public:
 
 
 protected:
+    // lots of variables...
+    IDeckLink *deckLink;
+    IDeckLinkOutput *deckLinkOutput;
+    IDeckLinkIterator *deckLinkIterator;
+    IDeckLinkDisplayMode *displayMode;
+    IDeckLinkConfiguration *deckLinkConfig;
+    IDeckLinkMutableVideoFrame *frame;
+    BMDTimeValue frame_start, time_now;
+
+    BMDTimeValue frame_duration;
+    BMDTimeScale time_base;
+    int frame_counter;
+
+
+    HRESULT result;
+    const char *string;
+    bool ready_frame;
+
     void schedule_next_frame(void) {
         deckLinkOutput->ScheduleVideoFrame(frame, frame_counter * frame_duration, frame_duration, time_base);
         frame_counter++;
     }
 
-    class MyCallback : public IDeckLinkOutputCallback {
+    class MyCallback : public IDeckLinkVideoOutputCallback {
         public:
             MyCallback(DecklinkOutput *_owner) : owner(_owner) { }
             HRESULT ScheduledFrameCompleted(IDeckLinkVideoFrame *completed_frame, BMDOutputFrameCompletionResult result) {
@@ -168,9 +186,13 @@ protected:
                 return S_OK;
             }
             HRESULT ScheduledPlaybackHasStopped(void) {
-                owner->ScheduledPlaybackStopped( );
+                owner->ScheduledPlaybackHasStopped( );
                 return S_OK;
             }
+
+            HRESULT QueryInterface(REFIID iid, LPVOID *ppv) { return E_NOINTERFACE; }
+            ULONG AddRef() { return 1; }
+            ULONG Release() { return 1; }
         protected:
             DecklinkOutput *owner;
     } callback_obj;
@@ -184,23 +206,6 @@ protected:
         fprintf(stderr, "WARNING: Scheduled playback stopped unexpectedly!\n");
     }
 
-    // lots of variables...
-    IDeckLink *deckLink;
-    IDeckLinkOutput *deckLinkOutput;
-    IDeckLinkIterator *deckLinkIterator;
-    IDeckLinkDisplayMode *displayMode;
-    IDeckLinkConfiguration *deckLinkConfig;
-    IDeckLinkMutableVideoFrame *frame;
-    BMDTimeValue frame_start, time_now;
-
-    BMDTimeValue frame_duration;
-    BMDTimeScale time_base;
-    int frame_counter;
-
-
-    HRESULT	result;
-    const char *string;
-    bool ready_frame;
 
 };
 #endif

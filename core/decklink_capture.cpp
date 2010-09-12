@@ -95,35 +95,6 @@ int main(int argc, char *argv[])
     if (deckLink->QueryInterface(IID_IDeckLinkInput, (void**)&deckLinkInput) != S_OK)
         goto bail;
 
-    if (deckLink->QueryInterface(IID_IDeckLinkConfiguration, (void**)&deckLinkConfig) != S_OK)
-        goto bail;
-
-    deckLinkConfig->SetVideoInputFormat(bmdVideoConnectionComposite);
-
-    if (deckLinkConfig->GetVideoInputFormat(&input_source) != S_OK) {
-        goto bail;
-    }
-
-    switch (input_source) {
-        case bmdVideoConnectionSDI:
-            fprintf(stderr, "SDI\n");
-            break;
-        case bmdVideoConnectionHDMI:
-            fprintf(stderr, "HDMI\n");
-            break;
-        case bmdVideoConnectionComponent:
-            fprintf(stderr, "Component\n");
-            break;
-        case bmdVideoConnectionComposite:
-            fprintf(stderr, "Composite\n");
-            break;
-        case bmdVideoConnectionSVideo:
-            fprintf(stderr, "S-Video\n");
-            break;
-        default:
-            fprintf(stderr, "On cocaine\n");
-            break;
-    }
 
     delegate = new DeckLinkCaptureDelegate();
     deckLinkInput->SetCallback(delegate);
