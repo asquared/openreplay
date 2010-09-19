@@ -28,10 +28,27 @@ public:
 
 #include "DeckLinkAPI.h"
 
-#define SCHEDULE_MORE_AUDIO_THRESHOLD 2*(48000/50)
+#define SCHEDULE_MORE_AUDIO_THRESHOLD 12000
 #define N_CHANNELS 2
 
-class DecklinkOutput : public OutputAdapter {
+#include <stdio.h>
+#include <math.h>
+
+/* Generate a 48khz sampled sine wave at frequency f */
+int GenerateSine(int16_t *samples, int len, int n_ch, int offset, float f) {
+    int i, j;
+    for (i = 0; i < len / n_ch; i++) {
+        for (j = i * n_ch; j < i * (n_ch + 1); j++) {
+            samples[j] = 16000.0 * sinf((offset + i) * f / 48000.0f);
+        }
+    }
+
+    return offset + i;
+}
+
+class DecklinkOutput : public OutputAdapter, 
+    public IDeckLinkVideoOutputCallback, 
+    public IDeckLinkAudioOutputCallback {
 public:
     // Magic framerate divisors for NTSC: timebase = 30000 ticks per second, frame duration = 1001 ticks
     // Magic framerate divisors for PAL 25FPS: timebase = 25 ticks per second, frame duration =  1 tick
@@ -39,7 +56,7 @@ public:
     DecklinkOutput(int cardIndex = 0) 
         : deckLink(0), deckLinkOutput(0), deckLinkIterator(0),
           displayMode(0), deckLinkConfig(0), frame_duration(1001), time_base(30000), 
-          frame_counter(0), ready_frame(true), callback_obj(this), aud_callback_obj(this)
+          frame_counter(0), sine_offset(0), ready_frame(true), rawaudio(NULL)
     {
         deckLinkIterator = CreateDeckLinkIteratorInstance( ); 
 	/* Connect to DeckLink card */
@@ -77,10 +94,24 @@ public:
         audio_len = 0;
         audio_actual_len = 0;
 
+        rawaudio=fopen("ffoutput_audio.raw", "w");
+        if (!rawaudio) {
+            throw std::runtime_error("failed to open raw audio output file");
+        }
 
-        // enable audio output
-        if (deckLinkOutput->SetAudioCallback(&aud_callback_obj) != S_OK) {
-            throw std::runtime_error("Failed to set audio callback!\n");
+
+        if (deckLinkOutput->SetScheduledFrameCompletionCallback(this) != S_OK) {
+            throw std::runtime_error("Failed to set video frame completion callback!\n");
+        }
+
+        // don't want, don't need audio callback
+        //if (deckLinkOutput->SetAudioCallback(this) != S_OK) {
+        //    throw std::runtime_error("Failed to set audio callback!\n");
+        //}
+
+        // enable audio and video output
+	if (deckLinkOutput->EnableVideoOutput(bmdModeNTSC, bmdVideoOutputFlagDefault) != S_OK) {
+            throw std::runtime_error("Failed to enable video output!\n");
         }
 
         if (deckLinkOutput->EnableAudioOutput(
@@ -91,19 +122,20 @@ public:
 
         }
 
-	// enable video output
-        if (deckLinkOutput->SetScheduledFrameCompletionCallback(&callback_obj) != S_OK) {
-            throw std::runtime_error("Failed to set video frame completion callback!\n");
-        }
+        //deckLinkOutput->BeginAudioPreroll( );
 
-	if (deckLinkOutput->EnableVideoOutput(bmdModeNTSC, bmdVideoOutputFlagDefault) != S_OK) {
-            throw std::runtime_error("Failed to enable video output!\n");
-        }
-
+        short one_frame_zero_audio[3200] = {0};
 
         // Preroll a few black frames(??)
-        schedule_next_frame( );
-        deckLinkOutput->StartScheduledPlayback(0, time_base, 1.0);
+        for (int i = 0; i < 10; ++i) {
+            schedule_next_frame( );
+            SetNextAudio(one_frame_zero_audio, 6400);
+        }
+
+        if (deckLinkOutput->StartScheduledPlayback(0, 100, 1.0) != S_OK) {
+            throw std::runtime_error("Failed to start scheduled playback!\n");
+        }
+
     }
 
 
@@ -122,11 +154,13 @@ public:
         frame->GetBytes((void **) &data_ptr);
 
         for (i = 0; i < 480; ++i) {
-            memcpy(frame + 1440*i, in_frame->data[0] + in_frame->linesize[0]*i, 1440);
+            memcpy(data_ptr + 1440*i, in_frame->data[0] + in_frame->linesize[0]*i, 1440);
         }
     }
 
     void SetNextAudio(short *sample_buf, size_t len) {
+        uint32_t actual_frames;
+
         if (audio_len < len) {
             audio_buf = (short *)av_realloc(audio_buf, len);
             if (!audio_buf) {
@@ -140,6 +174,14 @@ public:
         memcpy(audio_buf, sample_buf, len);
         audio_actual_len = len;
         audio_ptr = 0;
+
+        /* schedule it and hope for the best */
+        deckLinkOutput->ScheduleAudioSamples(sample_buf, len / sizeof(short) / N_CHANNELS,
+            0, 0, &actual_frames);
+
+        if (actual_frames < (len / sizeof(short) / N_CHANNELS)) {
+            fprintf(stderr, "sent too large an audio block");
+        }
     }
 
     void Flip(void) {
@@ -153,7 +195,20 @@ public:
     }
 
     bool ReadyForMoreAudio(void) {
-        return (audio_actual_len >= audio_ptr);
+        uint32_t number_buffered;
+
+        if (deckLinkOutput->GetBufferedAudioSampleFrameCount(&number_buffered) != S_OK) {
+            fprintf(stderr, "don't know how many samples we got\n");
+            return false; 
+        }
+
+        fprintf(stderr, "audio left: %u\n", number_buffered);
+
+        if (number_buffered < SCHEDULE_MORE_AUDIO_THRESHOLD) {
+            return true;
+        } else {
+            return false;
+        }
     }
 
     ~DecklinkOutput(void) {
@@ -179,6 +234,94 @@ public:
             
     }
 
+    /* DeckLink delegate functions */
+    virtual HRESULT ScheduledFrameCompleted(IDeckLinkVideoFrame *completed_frame, BMDOutputFrameCompletionResult result) {
+        switch (result) {
+            case bmdOutputFrameDisplayedLate:
+                fprintf(stderr, "WARNING: Decklink displayed frame late (running too slow!)\r\n");
+                break;
+            case bmdOutputFrameDropped:
+                fprintf(stderr, "WARNING: Decklink dropped frame\r\n");
+                break;
+            case bmdOutputFrameFlushed:
+                fprintf(stderr, "WARNING: Decklink flushed frame\r\n");
+                break;
+            default:
+                break;
+        }
+
+        schedule_next_frame( );
+        ready_frame = true;
+
+        return S_OK;
+    }
+
+    virtual HRESULT ScheduledPlaybackHasStopped(void) {
+        fprintf(stderr, "WARNING: Scheduled playback stopped unexpectedly!\n");
+        return S_OK;
+    }
+
+    virtual HRESULT RenderAudioSamples(bool preroll) {
+#if 0
+        uint32_t number_buffered = 0;
+        uint32_t number_consumed = 0;
+        // 1/50 sec worth of zeros @ 48khz stereo = 960 samples. Leave some extra...
+        short zeros[64000];
+
+        fprintf(stderr, "RenderAudioSamples(%d)\n", preroll);
+
+        /* Generate 1000Hz sine */
+        sine_offset = GenerateSine(zeros, 64000/2, 2, sine_offset, 1000.0f);
+
+        if (deckLinkOutput->GetBufferedAudioSampleFrameCount(&number_buffered) != S_OK) {
+            fprintf(stderr, "don't know how many samples we got\n");
+            return S_OK; /* return something else? */
+        }
+
+        if (number_buffered < SCHEDULE_MORE_AUDIO_THRESHOLD) {
+            // consume what will be consumed...
+            //if (audio_ptr >= audio_actual_len) {
+                // zero out buffer and print warning
+                fwrite(zeros, 1, sizeof(zeros), rawaudio);
+                if (deckLinkOutput->ScheduleAudioSamples(
+                    (void *) zeros, sizeof(zeros) / sizeof(short) / N_CHANNELS,
+                    0, 0, &number_consumed) != S_OK) {
+
+                    fprintf(stderr, "warning: scheduling of (null) audio samples failed\n");
+                }
+            
+            #if 0
+            } else {
+                // Schedule what we've got.
+                if (deckLinkOutput->ScheduleAudioSamples(
+                    (void *) (audio_buf + audio_ptr), 
+                    (audio_actual_len - audio_ptr) / N_CHANNELS,
+                    0, 0, &number_consumed) != S_OK) {
+                
+                    fprintf(stderr, "warning: scheduling of audio samples failed\n");
+
+                } else {
+                    audio_ptr += (number_consumed * N_CHANNELS);
+                }
+            }
+            #endif
+        } else {
+            fprintf(stderr, "Not yet below water mark - not scheduling more audio\n");
+        }
+
+        if (preroll) {
+//            if (deckLinkOutput->StartScheduledPlayback(0, 100, 1.0) != S_OK) {
+//                throw std::runtime_error("Failed to start scheduled playback!\n");
+//            }
+        }
+#endif
+        return S_OK;
+    }
+
+    /* stubs */
+    HRESULT QueryInterface(REFIID iid, LPVOID *ppv) { return E_NOINTERFACE; }
+    ULONG AddRef() { return 1; }
+    ULONG Release() { return 1; }
 
 protected:
     // lots of variables...
@@ -193,6 +336,7 @@ protected:
     BMDTimeValue frame_duration;
     BMDTimeScale time_base;
     int frame_counter;
+    int sine_offset;
 
 
     HRESULT result;
@@ -202,105 +346,12 @@ protected:
     short *audio_buf;
     size_t audio_len, audio_actual_len, audio_ptr;
 
+    FILE *rawaudio;
+
     void schedule_next_frame(void) {
         deckLinkOutput->ScheduleVideoFrame(frame, frame_counter * frame_duration, frame_duration, time_base);
         frame_counter++;
     }
-
-    class MyVideoCallback : public IDeckLinkVideoOutputCallback {
-        public:
-            MyVideoCallback(DecklinkOutput *_owner) : owner(_owner) { }
-            HRESULT ScheduledFrameCompleted(IDeckLinkVideoFrame *completed_frame, BMDOutputFrameCompletionResult result) {
-                switch (result) {
-                    case bmdOutputFrameDisplayedLate:
-                        fprintf(stderr, "WARNING: Decklink displayed frame late (running too slow!)\r\n");
-                        break;
-                    case bmdOutputFrameDropped:
-                        fprintf(stderr, "WARNING: Decklink dropped frame\r\n");
-                        break;
-                    case bmdOutputFrameFlushed:
-                        fprintf(stderr, "WARNING: Decklink flushed frame\r\n");
-                        break;
-                    default:
-                        break;
-                }
-                owner->ScheduledFrameCompleted( );
-                return S_OK;
-            }
-            HRESULT ScheduledPlaybackHasStopped(void) {
-                owner->ScheduledPlaybackHasStopped( );
-                return S_OK;
-            }
-
-            HRESULT QueryInterface(REFIID iid, LPVOID *ppv) { return E_NOINTERFACE; }
-            ULONG AddRef() { return 1; }
-            ULONG Release() { return 1; }
-        protected:
-            DecklinkOutput *owner;
-    } callback_obj;
-
-    class MyAudioCallback : public IDeckLinkAudioOutputCallback {
-        public:
-            MyAudioCallback(DecklinkOutput *_owner) : owner(_owner) { }
-            HRESULT RenderAudioSamples(bool preroll) { 
-                return owner->RenderAudioSamples(preroll);
-            }
-            HRESULT QueryInterface(REFIID iid, LPVOID *ppv) { return E_NOINTERFACE; }
-            ULONG AddRef() { return 1; }
-            ULONG Release() { return 1; }
-        protected:
-            DecklinkOutput *owner;
-    } aud_callback_obj;
-
-    void ScheduledFrameCompleted(void) {
-        schedule_next_frame( );
-        ready_frame = true;
-    }
-
-    void ScheduledPlaybackHasStopped(void) {
-        fprintf(stderr, "WARNING: Scheduled playback stopped unexpectedly!\n");
-    }
-
-    HRESULT RenderAudioSamples(bool preroll) {
-        uint32_t number_buffered = 0;
-        uint32_t number_consumed = 0;
-        // 1/50 sec worth of zeros @ 48khz stereo = 960 samples. Leave some extra...
-        short zeros[3840];
-        if (deckLinkOutput->GetBufferedAudioSampleFrameCount(&number_buffered) != S_OK) {
-            // error handling
-        }
-
-        if (number_buffered < SCHEDULE_MORE_AUDIO_THRESHOLD) {
-            // consume what will be consumed...
-            if (audio_ptr >= audio_actual_len) {
-                // zero out buffer and print warning
-                fprintf(stderr, "Ran out of audio! Scheduling some zeros instead...");
-                memset(zeros, 0, sizeof(zeros));
-                if (deckLinkOutput->ScheduleAudioSamples(
-                    (void *) zeros, sizeof(zeros) / sizeof(short) / N_CHANNELS,
-                    0, 0, &number_consumed) != S_OK) {
-
-                    fprintf(stderr, "warning: scheduling of (null) audio samples failed\n");
-                }
-                
-            } else {
-                // Schedule what we've got.
-                if (deckLinkOutput->ScheduleAudioSamples(
-                    (void *) (audio_buf + audio_ptr), 
-                    (audio_actual_len - audio_ptr) / N_CHANNELS,
-                    0, 0, &number_consumed) != S_OK) {
-                
-                    fprintf(stderr, "warning: scheduling of audio samples failed\n");
-
-                } else {
-                    audio_ptr += (number_consumed * N_CHANNELS);
-                }
-            }
-        }
-
-        return S_OK;
-    }
-
 
 };
 #endif

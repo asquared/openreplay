@@ -112,6 +112,39 @@ pid_t start_ffmpeg(int argc, char **argv, int *audio_pipe, int *video_pipe) {
     }
 }
 
+pid_t start_aplay(int *pipefd) {
+    pid_t child_pid;
+    int apipe[2];
+    
+    if (pipe(apipe) < 0) {
+        perror("aplay pipe");
+        throw std::runtime_error("pipe creation failed");
+    }
+
+    child_pid = fork( );
+    if (child_pid == -1) {
+        perror("aplay fork");
+        throw std::runtime_error("Forking aplay process failed");
+    } else if (child_pid == 0) {
+        /* exec aplay with the necessary options, and with the pipe as stdin */
+        close(apipe[1]);
+        dup2(apipe[0], STDIN_FILENO);
+        execlp("aplay", "aplay",
+            "--format=S16_LE",
+            "--channels=2",
+            "--rate=48000",
+            NULL /* terminator */
+        );
+        perror("execlp");
+        fprintf(stderr, "Failed to start aplay\n");
+        exit(-1);
+    } else {
+        *pipefd = apipe[1];
+        close(apipe[0]);
+        return child_pid;
+    }
+}
+
 class PipeBuffer {
     public:
         PipeBuffer(int fd_, size_t block_size_) {
@@ -120,6 +153,10 @@ class PipeBuffer {
             current_read_buf = NULL;
             read_so_far = 0;
             eof = false;
+        }
+
+        ~PipeBuffer( ) { 
+            fprintf(stderr, "%d frames left in buffer\n", ready_blocks.size( ));
         }
 
 
@@ -143,6 +180,8 @@ class PipeBuffer {
             for (i = 0; i < n; ++i) {
                 if ((pfds[i].revents & POLLIN) && list[i]->want_poll( )) {
                     list[i]->read_more( );
+                } else if (pfds[i].revents & POLLHUP) {
+                    list[i]->set_eof( );
                 }
 
                 if (pfds[i].revents & POLLNVAL) {
@@ -150,10 +189,6 @@ class PipeBuffer {
                     list[i]->set_error( );
                 }
 
-                if (pfds[i].revents & POLLHUP) {
-                    fprintf(stderr, "buffer %d: other end hung up\n", i);
-                    list[i]->set_eof( );
-                }
             }
 
             delete [] pfds;
@@ -177,6 +212,10 @@ class PipeBuffer {
 
         bool at_eof( ) {
             return eof;
+        }
+
+        bool stream_finished( ) {
+            return (eof && ready_blocks.empty( ));
         }
 
     protected:
@@ -215,6 +254,7 @@ class PipeBuffer {
             // allocate new block if needed
             if (current_read_buf == NULL) {
                 current_read_buf = (uint8_t *)av_malloc(block_size);
+                read_so_far = 0;
                 if (current_read_buf == NULL) {
                     throw std::runtime_error("Failed to allocate new block");
                 }
@@ -255,9 +295,78 @@ class PipeBuffer {
         static const int POLL_TIMEOUT = 1; /* milliseconds */
 };
 
+class PipeAudioOutput {
+    public:
+        PipeAudioOutput(int pipefd) {
+            fd = pipefd;
+            buf_size = 0;
+            data_buf = NULL;
+
+        }
+        bool ReadyForMoreAudio( ) {
+            do_poll( );
+            if (buf_avail == 0) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+        void SetNextAudio(short *samples, size_t len) {
+            if (buf_size < len) {
+                data_buf = (uint8_t *)av_realloc(data_buf, len);
+                if (!data_buf) {
+                    throw std::runtime_error("allocation failure");
+                }
+
+                buf_size = len;
+            }
+
+            buf_avail = len;
+            buf_ptr = 0;
+            memcpy(data_buf, samples, len);
+        }
+    protected:
+        int fd;
+
+        void do_poll( ) {
+            struct pollfd pfd;
+            pfd.fd = fd;
+            pfd.events = POLLOUT;
+            if (poll(&pfd, 1, 0) < 0) {
+                perror("poll");
+                throw std::runtime_error("poll failed");
+            }
+
+            if (pfd.revents & POLLOUT) {
+                do_write( );
+            }
+        }
+
+        void do_write( ) {
+            ssize_t n_written;
+            if (buf_avail > 0) {
+                n_written = write(fd, data_buf + buf_ptr, buf_avail);
+                if (n_written < 0) {
+                    perror("write");
+                    throw std::runtime_error("write failed");
+                } else {
+                    buf_ptr += n_written;
+                    buf_avail -= n_written;
+                }
+            }
+        }
+
+        uint8_t *data_buf;
+        size_t buf_size;
+        size_t buf_avail;
+        size_t buf_ptr;
+
+        bool ready;
+};
+
 int main(int argc, char **argv) {
-    pid_t ffmpeg_pid;
-    int apipe, vpipe;
+    pid_t ffmpeg_pid, aplay_pid;
+    int apipe, vpipe, aout_pipe;
 
     uint8_t *audio_block;
     uint8_t *frame;
@@ -269,9 +378,12 @@ int main(int argc, char **argv) {
 
     pict.linesize[0] = VIDEO_LINE_SIZE;
 
-    out = new StdoutOutput( );
+    out = new DecklinkOutput(0);
 
     ffmpeg_pid = start_ffmpeg(argc - 1, argv + 1, &apipe, &vpipe);
+    aplay_pid = start_aplay(&aout_pipe);
+
+    PipeAudioOutput *aout = new PipeAudioOutput(aout_pipe);
 
     PipeBuffer v_buffer(vpipe, VIDEO_FRAME_SIZE);
     PipeBuffer a_buffer(apipe, AUDIO_BLOCK_SIZE);
@@ -281,11 +393,10 @@ int main(int argc, char **argv) {
     buffer_list[1] = &a_buffer;
 
     /* while we've still got stuff to play back... */
-    while (!v_buffer.at_eof( ) && !a_buffer.at_eof( )) {
+    while (!v_buffer.stream_finished( ) || !a_buffer.stream_finished( )) {
         if (out->ReadyForNextFrame( )) {
             frame = v_buffer.get_next_block( );
             if (frame) {
-                fprintf(stderr, "video\n");
                 pict.data[0] = frame;
                 out->SetNextFrame(&pict);
                 v_buffer.done_with_block(frame);
@@ -293,11 +404,10 @@ int main(int argc, char **argv) {
                 out->Flip( ); // this is rapidly becoming meaningless
             }
         }
-        if (out->ReadyForMoreAudio( )) {
+        if (aout->ReadyForMoreAudio( )) {
             audio_block = a_buffer.get_next_block( );
             if (audio_block) {
-                fprintf(stderr, "audio\n");
-                out->SetNextAudio((short *)audio_block, AUDIO_BLOCK_SIZE);
+                aout->SetNextAudio((short *)audio_block, AUDIO_BLOCK_SIZE);
                 a_buffer.done_with_block(audio_block);
             }
         }
@@ -305,4 +415,6 @@ int main(int argc, char **argv) {
         /* receive more data if we can */
         PipeBuffer::update(buffer_list, 2);
     }
+
+    usleep(5000000);
 }

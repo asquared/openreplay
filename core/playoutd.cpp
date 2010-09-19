@@ -131,11 +131,14 @@ int main(int argc, char *argv[]) {
     bool next_frame_ready = false;
     int i;
     size_t frame_size;
+
+    short zero_samples[2048] = {0};
+
     timecode_t frame_no;
 
     AVPicture *decoded_frame, *scaled_frame;
 
-    out = new StdoutOutput( );
+    out = new DecklinkOutput(0);
 
     // initialize decoder
     FFwrapper::Decoder mjpeg_decoder( CODEC_ID_MJPEG );
@@ -205,6 +208,10 @@ int main(int argc, char *argv[]) {
             out->Flip( );
             next_frame_ready = false;
         } 
+
+        if (out->ReadyForMoreAudio( )) {
+            out->SetNextAudio(zero_samples, sizeof(zero_samples));
+        }
         
         if (try_receive(&cmd)) {
             parse_command(&cmd);
