@@ -171,7 +171,6 @@ int main(int argc, char *argv[]) {
                         decoded_frame = mjpeg_decoder.try_decode(frame_data, frame_size);
                         if (decoded_frame) {
                             scaled_frame = scaler.scale(decoded_frame, mjpeg_decoder.get_ctx( ));
-                            out->SetNextFrame(scaled_frame);
                             next_frame_ready = true;
                             if (step) {
                                 play_offset++;
@@ -200,19 +199,18 @@ int main(int argc, char *argv[]) {
                 if (step_backward) {
                     step_backward = false;
                 }
+            } else if (paused) {
+                next_frame_ready = true;
             }
 
         }
 
         if (out->ReadyForNextFrame( ) && next_frame_ready) {
+            out->SetNextFrame(scaled_frame);
             out->Flip( );
             next_frame_ready = false;
         } 
 
-        if (out->ReadyForMoreAudio( )) {
-            out->SetNextAudio(zero_samples, sizeof(zero_samples));
-        }
-        
         if (try_receive(&cmd)) {
             parse_command(&cmd);
         } else {
