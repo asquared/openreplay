@@ -132,8 +132,6 @@ int main(int argc, char *argv[]) {
     int i;
     size_t frame_size;
 
-    short zero_samples[2048] = {0};
-
     timecode_t frame_no;
 
     AVPicture *decoded_frame, *scaled_frame;
