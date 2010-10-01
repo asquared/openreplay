@@ -116,7 +116,7 @@ int main(int argc, char *argv[])
     }
     
 
-    fprintf(stderr, "shit's rolling...\n");
+    fprintf(stderr, "Attempting to start capture...\n");
     // All Okay.
     exitStatus = 0;
     
