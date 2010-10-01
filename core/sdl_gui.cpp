@@ -56,6 +56,7 @@ std::vector<int *> saved_marks;
 #define MIN_SPEED -20
 #define MAX_SPEED 15
 #define SEEK_STEP 15 // 1/2 second steps
+#define TALLY_MARGIN 3
 
 // Preroll frames from mark
 int preroll = 150;
@@ -63,7 +64,8 @@ int postroll = 300; // used for preview only
 int qreplay_speed = 10;
 int qreplay_cam = 0;
 int playout_pid = -1;
-int playout_timecode = 0;
+
+struct playout_status playout_status;
 
 // Preview frames per frame
 #define PVW_FPF 3
@@ -339,7 +341,7 @@ void socket_setup(void) {
 
 }
 
-void update_playout_timecode(void) {
+void update_playout_status(void) {
     int result;
     struct pollfd pfd;
 
@@ -351,7 +353,7 @@ void update_playout_timecode(void) {
 
     while (pfd.revents & POLLIN) {
         // ready to go!
-        recvfrom(socket_fd, &playout_timecode, sizeof(playout_timecode), 0, 0, 0);
+        recvfrom(socket_fd, &playout_status, sizeof(playout_status), 0, 0, 0);
         pfd.revents = 0;
         result = poll(&pfd, 1, 1);
     }
@@ -498,13 +500,30 @@ void joyseek_update(Sint16 axis_value, float speed) {
     joy_integrate += (axis_value / 32768.0 * speed);
 }
 
+void draw_tally(int x, int y, int r, int g, int b) {
+    SDL_Rect rc;
+
+    rc.x = x - TALLY_MARGIN;
+    rc.y = y - TALLY_MARGIN;
+    rc.w = frame_buf->w + 2*TALLY_MARGIN;
+    rc.h = frame_buf->h + 2*TALLY_MARGIN;
+
+    SDL_FillRect(screen, &rc, 
+        SDL_MapRGB(screen->format, r, g, b)
+    );
+}
+
 int main(int argc, char *argv[])
 {
         int x, y, j;
+        // this kludge works if the video frame size isn't an even multiple
+        // of the whole screen size... :-/
+        int text_start_x;
         int flag = 0;
         input = 0;
         joyseek_enabled = false;
 
+        memset((void *)&playout_status, 0, sizeof(playout_status));
 
         SDL_Event evt;
         SDL_Joystick *game_port = 0;
@@ -574,9 +593,19 @@ int main(int argc, char *argv[])
         while (!flag) {
             // Video Output
             SDL_FillRect(screen, 0, 0);
-            x = 0;
-            y = 0;
+            x = TALLY_MARGIN;
+            y = TALLY_MARGIN;
+            text_start_x = 0;
             for (j = 0; j < n_buffers; j++) {
+                /* Draw tally indicators */
+                if (j == playout_status.active_source && playout_status.valid) {
+                    /* red "live" tally */
+                    draw_tally(x, y, 255, 0, 0);
+                } else if (j == camera_get( )) {
+                    /* green "preview" tally */
+                    draw_tally(x, y, 0, 255, 0);
+                }
+
                 /* Draw frames as appropriate for the current mode. */
                 if (display_mode == LIVE) {
                     draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1); 
@@ -593,10 +622,11 @@ int main(int argc, char *argv[])
                 }
 
 
-                x += frame_buf->w;
+                x += frame_buf->w + 2*TALLY_MARGIN;
                 if (x + frame_buf->w > screen->w) {
+                    text_start_x = x;
                     x = 0;
-                    y += frame_buf->h;
+                    y += frame_buf->h + 2*TALLY_MARGIN;
                 }
             }
 
@@ -605,11 +635,12 @@ int main(int argc, char *argv[])
                 joyseek_update(SDL_JoystickGetAxis(game_port, 2), JOYSTICK_SPEED); // the twisty axis?
             }
 
-            // Try to update the timecode
-            update_playout_timecode( );
+            // Try to update the playout information
+            update_playout_status( );
 
-            // x, y points at the top left of the next free square
-            x = 720*2 + 10;
+            // x, y points at the top left of the big empty column 
+            // at the right of the screen...
+            x = text_start_x;
             y = 10;
 
             if (display_mode == LIVE) {
@@ -626,7 +657,13 @@ int main(int argc, char *argv[])
                 line_of_text(&x, &y, "");
             }
                 
-            line_of_text(&x, &y, "PLAYOUT: %s", timecode_fmt(playout_timecode));
+            if (playout_status.valid) {
+                line_of_text(&x, &y, "PLAYOUT: %s", timecode_fmt(playout_status.timecode));
+                line_of_text(&x, &y, "PLAYOUT SOURCE: CAM %d", playout_status.active_source);
+            } else {
+                line_of_text(&x, &y, "PLAYOUT SERVER NOT RUNNING??");
+                line_of_text(&x, &y, "STATUS UNKNOWN");
+            }
 
             //line_of_text(font, &x, &y, "");
             if (input > 0) {
