@@ -25,4 +25,10 @@ struct playout_command {
     int marks[MAX_CHANNELS];
 };
 
+struct playout_status {
+    int timecode;
+    int active_source;
+    int valid;
+};
+
 #endif
