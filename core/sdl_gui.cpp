@@ -20,6 +20,9 @@
 #include "mjpeg_config.h"
 #include "playout_ctl.h"
 
+#include <vector>
+#include <list>
+
 
 #define PVW_W 720
 #define PVW_H 480
@@ -48,6 +51,7 @@ FFwrapper::Decoder mjpeg_decoder( CODEC_ID_MJPEG );
 FFwrapper::Scaler scaler(PVW_W, PVW_H, PIX_FMT_BGR24);
 
 int *marks, *replay_ptrs, *replay_ends;
+std::vector<int *> saved_marks;
 
 #define MIN_SPEED -20
 #define MAX_SPEED 15
@@ -69,6 +73,8 @@ enum _display_mode { PREVIEW, LIVE, SEEK_MARK, SEEK_START } display_mode;
 
 int socket_fd;
 struct sockaddr_in daemon_addr;
+
+void log_message(const char *fmt, ...);
 
 void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
     SDL_Rect rect;
@@ -113,6 +119,8 @@ void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
                     last_check = time(NULL);
                     n_decoded = 0;
                 }
+            } else {
+                fprintf(stderr, "decode failed!\n");
             }
         } catch (FFwrapper::CodecError e) {
             fprintf(stderr, "error decoding a frame\n");
@@ -129,6 +137,30 @@ void mark(void) {
     for (j = 0; j < n_buffers; ++j) {
         marks[j] = buffers[j]->get_timecode( );
     }
+}
+
+void save_mark(void) {
+    int *saved_mark = new int[n_buffers];
+
+    // alignment safe??
+    memcpy(saved_mark, marks, sizeof(int) * n_buffers);
+
+    saved_marks.push_back(saved_mark);
+
+    log_message("saved mark: number %d", saved_marks.size( ) - 1);
+}
+
+void recall_mark(int n) {
+    if (n < 0) {
+        log_message("recall: (negative) mark number %d not found", n);
+        return;
+    }
+
+    if (n >= saved_marks.size( )) { 
+        log_message("recall: mark number %d not found", n);
+        return;
+    }
+    memcpy(marks, saved_marks[n], sizeof(int) * n_buffers);
 }
 
 
@@ -203,6 +235,34 @@ void line_of_text(int *x, int *y, const char *fmt, ...) {
     }
     
     *y += FONT_CELL_H + 5;
+}
+
+typedef std::list<char *> message_log_t;
+message_log_t message_log;
+
+void log_message(const char *fmt, ...) {
+    va_list ap;
+    char *sptr;
+
+    va_start(ap, fmt);
+    vasprintf(&sptr, fmt, ap);
+    va_end(ap);
+
+    message_log.push_front(sptr);    
+}
+
+void draw_message_log(int x, int y, int h) {
+    /* most recent log messages go at the top and we'll work our way down */
+    message_log_t::iterator i;
+    int yf = y + h;
+
+    for (i = message_log.begin( ); i != message_log.end( ); ++i) {
+        line_of_text(&x, &y, "%s", *i);
+        // stop if we're off the end of the screen
+        if (y >= yf) {
+            break;
+        }
+    }
 }
 
 
@@ -445,6 +505,7 @@ int main(int argc, char *argv[])
         input = 0;
         joyseek_enabled = false;
 
+
         SDL_Event evt;
         SDL_Joystick *game_port = 0;
 
@@ -580,6 +641,7 @@ int main(int argc, char *argv[])
             line_of_text(&x, &y, "PLAYOUT SOURCE: %d [0..9, PgUp]", qreplay_cam + 1);
             line_of_text(&x, &y, "AUTOTAKE [PgDn]");
             line_of_text(&x, &y, "AUTOTAKE + REWIND [Alt+PgDn]");
+            draw_message_log(x, y, screen->h - y);
 
             // Seek with the joystick...
             if (joyseek_enabled) {
@@ -714,6 +776,14 @@ int main(int argc, char *argv[])
                             live_cut_and_rewind(camera_get( ));
                             break;
 
+                        case SDLK_BACKSPACE:
+                            save_mark( );
+                            break;
+
+                        case SDLK_BACKSLASH:
+                            recall_mark(consume_numeric_input( ));
+                            break;
+
                         case SDLK_1:
                         case SDLK_2:
                         case SDLK_3:
@@ -723,7 +793,7 @@ int main(int argc, char *argv[])
                         case SDLK_7:
                         case SDLK_8:
                         case SDLK_9:
-                            camera_set(evt.key.keysym.unicode - L'0' - 1);
+                            camera_set(evt.key.keysym.unicode - L'0');
                             break;
 
 
