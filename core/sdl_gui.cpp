@@ -688,8 +688,12 @@ int main(int argc, char *argv[])
                             break;
 
                         case SDLK_m:
+                            mark( );
+                            break;
+
                         case SDLK_KP_PLUS:
                             mark( );
+                            cue_playout( );
                             break;
 
                         case SDLK_INSERT:
