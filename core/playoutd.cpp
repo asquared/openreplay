@@ -24,7 +24,7 @@ int marks[MAX_CHANNELS];
 float play_offset;
 
 int socket_fd;
-struct sockaddr_in timecode_addr;
+struct sockaddr_in status_addr;
 
 int playout_source = 0;
 bool did_cut = false;
@@ -40,10 +40,10 @@ void socket_setup(void) {
     addr.sin_family = AF_INET;
     addr.sin_port = htons(30001);
     inet_aton("127.0.0.1", &addr.sin_addr);
-
-    timecode_addr.sin_family = AF_INET;
-    timecode_addr.sin_port = htons(30002);
-    inet_aton("127.0.0.1", &timecode_addr.sin_addr);
+    
+    status_addr.sin_family = AF_INET;
+    status_addr.sin_port = htons(30002);
+    inet_aton("127.0.0.1", &status_addr.sin_addr);
 
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd == -1) {
@@ -131,6 +131,7 @@ int main(int argc, char *argv[]) {
     bool next_frame_ready = false;
     int i;
     size_t frame_size;
+    struct playout_status status;
 
     timecode_t frame_no;
 
@@ -208,6 +209,14 @@ int main(int argc, char *argv[]) {
             out->Flip( );
             next_frame_ready = false;
         } 
+
+        // (try to) send status update
+        status.valid = 1;
+        // timecode is always relative to stream 0
+        status.timecode = marks[0] + play_offset;
+        status.active_source = playout_source;
+        sendto(socket_fd, &status, sizeof(status), 0, 
+            (sockaddr *)&status_addr, sizeof(status_addr));
 
         if (try_receive(&cmd)) {
             parse_command(&cmd);
