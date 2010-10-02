@@ -1,3 +1,5 @@
+# This makefile is inefficient.
+
 CC=g++
 SDK_PATH=/home/armena/opt/bmd_sdk/Linux/include
 CFLAGS=-Wno-multichar -Wall -Wextra -I $(SDK_PATH) -fno-rtti -g -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -DENABLE_DECKLINK
@@ -24,6 +26,9 @@ field_split: field_split.cpp
 
 ffoutput: ffoutput.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o ffoutput ffoutput.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
+
+libjpeg_test: libjpeg_test.cpp mjpeg_frame.cpp
+	$(CC) -o libjpeg_test $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 clean:
 	rm -f raw_ingest ingest output
