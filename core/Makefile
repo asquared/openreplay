@@ -28,7 +28,10 @@ ffoutput: ffoutput.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o ffoutput ffoutput.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
 
 libjpeg_test: libjpeg_test.cpp mjpeg_frame.cpp
-	$(CC) -o libjpeg_test $^ $(CFLAGS) $(LDFLAGS) -ljpeg
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
+
+time_libjpeg: time_libjpeg.cpp mjpeg_frame.cpp
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 clean:
 	rm -f raw_ingest ingest output
