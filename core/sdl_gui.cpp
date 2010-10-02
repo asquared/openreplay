@@ -644,6 +644,10 @@ int main(int argc, char *argv[])
                 }
             }
 
+            if (text_start_x == 0) {
+                text_start_x = x;
+            }
+
             // update joystick axis
             if (game_port) {
                 joyseek_update(SDL_JoystickGetAxis(game_port, 2), JOYSTICK_SPEED); // the twisty axis?
