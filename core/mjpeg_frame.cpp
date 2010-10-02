@@ -60,11 +60,18 @@ GLOBAL(void) jpeg_mem_src(j_decompress_ptr cinfo, void *data, size_t len) {
     cinfo->src->term_source = term_source;
 }
 
+METHODDEF(void) my_error_exit(j_common_ptr cinfo) {
+    (*cinfo->err->output_message)(cinfo);
+    /* return control to exception handler (or maybe crash spectacularly) */
+    throw std::runtime_error("JPEG decode error");
+}
+
 MJPEGDecoder::MJPEGDecoder( ) {
     memset(&cinfo, 0, sizeof(cinfo));
 
     cinfo.err = jpeg_std_error(&jerr);
-    // hack this up to throw a C++ exception? will that work?
+    // this handler throws a C++ exception.
+    jerr.error_exit = my_error_exit;
 
     jpeg_create_decompress(&cinfo);
 
@@ -76,13 +83,14 @@ struct picture *MJPEGDecoder::decode_full(mjpeg_frame *frame) {
         f1 = decode_first(frame);
         f2 = decode_second(frame);
         
-        free_picture(f1);
-        free_picture(f2);
         if (frame->odd_dominant) {
             out = weave(f2, f1);
         } else {
             out = weave(f1, f2);
         }
+
+        free_picture(f1);
+        free_picture(f2);
     } else {
         out = decode(frame->data, frame->f1size);
     }
