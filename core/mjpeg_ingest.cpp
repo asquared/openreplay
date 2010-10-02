@@ -99,6 +99,24 @@ int main(int argc, char *argv[])
             return 1;
     }
 
+    switch (interlacing_mode) {
+        case PROGRESSIVE:
+            frame_buf->interlaced = false;
+            break;
+        case ODD_DOMINANT: 
+            frame_buf->odd_dominant = true;
+            frame_buf->interlaced = true;
+            break;
+        case EVEN_DOMINANT:
+            frame_buf->odd_dominant = false;
+            frame_buf->interlaced = true;
+            break;
+        default:
+            fprintf(stderr, "How did this happen?\n");
+            exit(1);
+    }
+
+
     /* Open the ring buffer files. */
     buffer = new MmapBuffer(argv[optind], MAX_FRAME_SIZE); 
 
@@ -141,7 +159,7 @@ int main(int argc, char *argv[])
                         dominant_field = true;
                     }
 
-                    if (interlacing_mode == PROGRESSIVE || dominant_field == false) {
+                    if (interlacing_mode == PROGRESSIVE || dominant_field == true) {
                         /* Put data into buffer if a complete frame (2 fields or 1 progressive frame) is done. */    
                         buffer->put(frame_buf, frame_buf->f1size + frame_buf->f2size + sizeof(*frame_buf));
                         start_of_frame = -1;
