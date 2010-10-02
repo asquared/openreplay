@@ -9,8 +9,8 @@ FFLDFLAGS=`pkg-config libavcodec libavformat libswscale libavutil --libs` -lavut
 
 all: sdl_gui mjpeg_ingest playoutd decklink_capture
 
-sdl_gui: sdl_gui.cpp mmap_buffer.cpp ffwrapper.cpp
-	$(CC) $(CFLAGS) $(FFCFLAGS) `sdl-config --cflags` -o sdl_gui sdl_gui.cpp ffwrapper.cpp mmap_buffer.cpp $(LDFLAGS) $(FFLDFLAGS) `sdl-config --libs` -lSDL_image 
+sdl_gui: sdl_gui.cpp mmap_buffer.cpp mjpeg_frame.cpp
+	$(CC) $(CFLAGS) $(FFCFLAGS) `sdl-config --cflags` -o $@ $^ $(LDFLAGS) $(FFLDFLAGS) `sdl-config --libs` -lSDL_image 
 
 mjpeg_ingest: mjpeg_ingest.cpp mmap_buffer.cpp
 	$(CC) -o mjpeg_ingest mjpeg_ingest.cpp mmap_buffer.cpp $(CFLAGS) $(LDFLAGS)
