@@ -11,7 +11,6 @@
 
 #include <poll.h>
 
-#include "ffwrapper.h"
 
 #include "SDL.h"
 #include "SDL_image.h"
@@ -19,9 +18,12 @@
 #include "mmap_buffer.h"
 #include "mjpeg_config.h"
 #include "playout_ctl.h"
+#include "mjpeg_frame.h"
 
 #include <vector>
 #include <list>
+
+#include <time.h>
 
 
 #define PVW_W 720
@@ -42,13 +44,9 @@ int clip_no = 0;
 #define INST_PERIOD 1000
 int n_decoded, last_check;
 
-unsigned char frame[MAX_FRAME_SIZE];
+struct mjpeg_frame *frame = NULL;
 
-// fix an FFmpeg namespace conflict
-#define mjpeg_decoder openreplay_mjpeg_decoder
-
-FFwrapper::Decoder mjpeg_decoder( CODEC_ID_MJPEG );
-FFwrapper::Scaler scaler(PVW_W, PVW_H, PIX_FMT_BGR24);
+MJPEGDecoder mjpeg_decoder;
 
 int *marks, *replay_ptrs, *replay_ends;
 std::vector<int *> saved_marks;
@@ -80,9 +78,10 @@ void log_message(const char *fmt, ...);
 
 void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
     SDL_Rect rect;
-    AVPicture *decoded, *scaled;
+    struct picture *decoded;
     uint8_t *pixels;
     int i;
+    int blit_w;
     
     size_t size;
 
@@ -90,7 +89,12 @@ void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
     rect.y = y;
 
     // Get the JPEG frame
-    size = sizeof(frame);
+    if (frame == NULL) {
+        frame = (struct mjpeg_frame *)malloc(MAX_FRAME_SIZE);
+    }
+
+    size = MAX_FRAME_SIZE;
+
     if (!buf->get((void *)frame, &size, tc)) {
         // Frame wasn't there. Fill with black.
         fprintf(stderr, "Frame not found!\n");
@@ -98,20 +102,32 @@ void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
         SDL_BlitSurface(frame_buf, 0, screen, &rect);
     } else {
         try {
-            decoded = mjpeg_decoder.try_decode(frame, size);
+            decoded = mjpeg_decoder.decode_full(frame);
             if (decoded) {
-                scaled = scaler.scale(decoded, mjpeg_decoder.get_ctx( ));
+                /* transfer decoded data to SDL_Surface and blit onto screen */
+                /* (does it make more sense just to lock the screen surface?) */
                 if (SDL_MUSTLOCK(frame_buf)) {
                     SDL_LockSurface(frame_buf);
                 }
+                
                 pixels = (uint8_t *)frame_buf->pixels;
-                for (i = 0; i < PVW_H; ++i) {
-                    memcpy(pixels, scaled->data[0] + scaled->linesize[0] * i, PVW_W * 3);
+                if (decoded->w > PVW_W) {
+                    blit_w = PVW_W;
+                } else {
+                    blit_w = decoded->w;
+                }
+
+                for (i = 0; i < PVW_H && i < decoded->h; ++i) {
+                    memcpy(pixels, decoded->data + decoded->line_pitch * i, blit_w * 3);
                     pixels += PVW_W * 3;
                 }
+
+                mjpeg_decoder.free_picture(decoded);
+
                 if (SDL_MUSTLOCK(frame_buf)) {
                     SDL_UnlockSurface(frame_buf);
                 }
+
                 SDL_BlitSurface(frame_buf, 0, screen, &rect);
 
                 n_decoded++;
@@ -124,11 +140,9 @@ void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
             } else {
                 fprintf(stderr, "decode failed!\n");
             }
-        } catch (FFwrapper::CodecError e) {
-            fprintf(stderr, "error decoding a frame\n");
-        } catch (FFwrapper::AllocationError e) {
-            fprintf(stderr, "failed to allocate memory in libavcodec\n");
-        } 
+        } catch (...) {
+            fprintf(stderr, "unexpected decode error\n");
+        }
 
     }
 
@@ -581,7 +595,7 @@ int main(int argc, char *argv[])
             goto dead;
         }
 
-        frame_buf = SDL_CreateRGBSurface(SDL_HWSURFACE, PVW_W, PVW_H, 24, 0, 0, 0, 0);
+        frame_buf = SDL_CreateRGBSurface(SDL_HWSURFACE, PVW_W, PVW_H, 24, 0xff, 0xff00, 0xff0000, 0);
         if (!frame_buf) {
             fprintf(stderr, "Failed to create frame buffer!\n");
             goto dead;
