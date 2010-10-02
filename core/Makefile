@@ -1,5 +1,5 @@
 CC=g++
-SDK_PATH=/home/rpitv/bmd_sdk/include
+SDK_PATH=/home/armena/opt/bmd_sdk/Linux/include
 CFLAGS=-Wno-multichar -Wall -Wextra -I $(SDK_PATH) -fno-rtti -g -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -DENABLE_DECKLINK
 LDFLAGS=-lm -ldl -lpthread
 FFCFLAGS=`pkg-config libavcodec libavformat libswscale libavutil --cflags` 
@@ -18,6 +18,9 @@ decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 
 playoutd: playoutd.cpp ffwrapper.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o playoutd playoutd.cpp ffwrapper.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS) $(LAVC_INCLUDES) $(LAVC_LIBS) $(FFCFLAGS) $(FFLDFLAGS)
+
+field_split: field_split.cpp 
+	$(CC) -o field_split field_split.cpp $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
 
 ffoutput: ffoutput.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o ffoutput ffoutput.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
