@@ -78,7 +78,7 @@ void log_message(const char *fmt, ...);
 
 void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
     SDL_Rect rect;
-    struct picture *decoded;
+    Picture *decoded;
     uint8_t *pixels;
     int i;
     int blit_w;
@@ -122,7 +122,7 @@ void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
                     pixels += PVW_W * 3;
                 }
 
-                mjpeg_decoder.free_picture(decoded);
+                Picture::free(decoded);
 
                 if (SDL_MUSTLOCK(frame_buf)) {
                     SDL_UnlockSurface(frame_buf);

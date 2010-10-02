@@ -24,13 +24,13 @@ int main(int argc, char **argv) {
     contrived_frame->f1size = fread(contrived_frame->data, 1, MAX_DATA_SIZE, f);
 
     /* decode it to a progressive frame */
-    struct picture *pic = dec.decode_full(contrived_frame);
+    Picture *pic = dec.decode_full(contrived_frame);
 
     fprintf(stderr, "decoded image: %dx%d\n", pic->w, pic->h);
     /* write decoded image to stdout */
     fwrite(pic->data, 1, pic->h * pic->line_pitch, stdout);
 
-    struct picture *pic2 = dec.decode_full(contrived_frame);
+    Picture *pic2 = dec.decode_full(contrived_frame);
     fprintf(stderr, "decoded again: %dx%d\n", pic->w, pic->h);
     fwrite(pic->data, 1, pic->h * pic->line_pitch, stdout);
 

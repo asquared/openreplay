@@ -34,12 +34,12 @@ int main(int argc, char **argv) {
     gettimeofday(&start, NULL);
     for (i = 0; i < n_decodes; i++) {
         /* decode it to a progressive frame */
-        struct picture *pic = dec.decode_full(contrived_frame);
+        Picture *pic = dec.decode_full(contrived_frame);
 
         /* do something useful here */
         fwrite(pic->data, 1, pic->h * pic->line_pitch, stdout);
 
-        dec.free_picture(pic);
+        Picture::free(pic);
     }
     gettimeofday(&finish, NULL);
 

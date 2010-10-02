@@ -8,12 +8,8 @@
 #include <stdint.h>
 #include <list>
 
-struct picture {
-    uint8_t *data;
-    uint16_t w, h, line_pitch;
-    /* private */
-    uint16_t alloc_size;
-};
+#include "picture.h"
+
 
 struct mjpeg_frame {
     bool interlaced;
@@ -27,22 +23,19 @@ class MJPEGDecoder {
     public:
         MJPEGDecoder( );
         ~MJPEGDecoder( );
-        struct picture *decode_full(struct mjpeg_frame *frame);
-        struct picture *decode_first(struct mjpeg_frame *frame);
-        struct picture *decode_second(struct mjpeg_frame *frame);
+        Picture *decode_full(struct mjpeg_frame *frame);
+        Picture *decode_first(struct mjpeg_frame *frame);
+        Picture *decode_second(struct mjpeg_frame *frame);
         /* Scan doubling */
-        struct picture *scan_double(struct picture *in) { return 0; }
-        struct picture *decode_first_doubled(struct mjpeg_frame *frame) { return 0; }
-        struct picture *decode_second_doubled(struct mjpeg_frame *frame) { return 0; }
-        void free_picture(struct picture *pic);
+        Picture *scan_double_up(Picture *in);
+        Picture *scan_double_down(Picture *in);
+        Picture *decode_first_doubled(struct mjpeg_frame *frame);
+        Picture *decode_second_doubled(struct mjpeg_frame *frame);
     protected:
-        struct picture *decode(void *data, size_t len);
-        struct picture *weave(struct picture *even, struct picture *odd);
-        struct picture *alloc_picture(uint16_t w, uint16_t h, uint16_t line_pitch);
+        Picture *decode(void *data, size_t len);
+        Picture *weave(Picture *even, Picture *odd);
         struct jpeg_decompress_struct cinfo;
         struct jpeg_error_mgr jerr;
-
-        std::list<struct picture *> free_pictures;
 };
 
 #endif

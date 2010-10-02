@@ -9,7 +9,7 @@ FFLDFLAGS=`pkg-config libavcodec libavformat libswscale libavutil --libs` -lavut
 
 all: sdl_gui mjpeg_ingest playoutd decklink_capture
 
-sdl_gui: sdl_gui.cpp mmap_buffer.cpp mjpeg_frame.cpp
+sdl_gui: sdl_gui.cpp mmap_buffer.cpp mjpeg_frame.cpp picture.cpp
 	$(CC) $(CFLAGS) $(FFCFLAGS) `sdl-config --cflags` -o $@ $^ $(LDFLAGS) $(FFLDFLAGS) `sdl-config --libs` -lSDL_image 
 
 mjpeg_ingest: mjpeg_ingest.cpp mmap_buffer.cpp
@@ -27,10 +27,10 @@ field_split: field_split.cpp
 ffoutput: ffoutput.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o ffoutput ffoutput.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
 
-libjpeg_test: libjpeg_test.cpp mjpeg_frame.cpp
+libjpeg_test: libjpeg_test.cpp mjpeg_frame.cpp picture.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
-time_libjpeg: time_libjpeg.cpp mjpeg_frame.cpp
+time_libjpeg: time_libjpeg.cpp mjpeg_frame.cpp picture.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 clean:

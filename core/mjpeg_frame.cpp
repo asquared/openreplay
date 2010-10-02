@@ -77,8 +77,8 @@ MJPEGDecoder::MJPEGDecoder( ) {
 
 }
 
-struct picture *MJPEGDecoder::decode_full(mjpeg_frame *frame) {
-    struct picture *f1, *f2, *out;
+Picture *MJPEGDecoder::decode_full(mjpeg_frame *frame) {
+    Picture *f1, *f2, *out;
     if (frame->interlaced) {
         f1 = decode_first(frame);
         f2 = decode_second(frame);
@@ -89,22 +89,22 @@ struct picture *MJPEGDecoder::decode_full(mjpeg_frame *frame) {
             out = weave(f1, f2);
         }
 
-        free_picture(f1);
-        free_picture(f2);
+        Picture::free(f1);
+        Picture::free(f2);
     } else {
         out = decode(frame->data, frame->f1size);
     }
     return out;
 }
 
-struct picture *MJPEGDecoder::weave(struct picture *even, struct picture *odd) {
+Picture *MJPEGDecoder::weave(Picture *even, Picture *odd) {
     assert(even->w == odd->w);
     assert(even->h == odd->h);
     assert(even->line_pitch == odd->line_pitch);
     
     int i;
 
-    struct picture *out = alloc_picture(even->w, 2*even->h, even->line_pitch);
+    Picture *out = Picture::alloc(even->w, 2*even->h, even->line_pitch);
     uint8_t *out_ptr = out->data;
     uint8_t *even_ptr = even->data;
     uint8_t *odd_ptr = odd->data;
@@ -122,16 +122,115 @@ struct picture *MJPEGDecoder::weave(struct picture *even, struct picture *odd) {
     return out;
 }
 
-struct picture *MJPEGDecoder::decode_first(mjpeg_frame *frame) {
-    return decode(frame->data, frame->f1size);
+Picture *MJPEGDecoder::decode_first(mjpeg_frame *frame) {
+    if (frame->interlaced) {
+        return decode(frame->data, frame->f1size);
+    } else {
+        return decode_full(frame);
+    }
 }
 
-struct picture *MJPEGDecoder::decode_second(mjpeg_frame *frame) {
-    return decode(frame->data + frame->f1size, frame->f2size);
+Picture *MJPEGDecoder::decode_second(mjpeg_frame *frame) {
+    if (frame->interlaced) {
+        return decode(frame->data + frame->f1size, frame->f2size);
+    } else {
+        return decode_full(frame);
+    }
 }
 
-struct picture *MJPEGDecoder::decode(void *data, size_t len) {
-    struct picture *output;
+Picture *MJPEGDecoder::decode_first_doubled(mjpeg_frame *frame) {
+    Picture *field, *ret;
+    if (frame->interlaced) {
+        field = decode_first(frame);
+        if (frame->odd_dominant) {
+            ret = scan_double_up(field);
+        } else {
+            ret = scan_double_down(field);
+        }
+        Picture::free(field);
+        return ret;
+    } else {
+        return decode_full(frame);
+    }
+}
+
+Picture *MJPEGDecoder::decode_second_doubled(mjpeg_frame *frame) {
+    Picture *field, *ret;
+    if (frame->interlaced) {
+        field = decode_second(frame);
+        if (frame->odd_dominant) {
+            ret = scan_double_down(field);
+        } else {
+            ret = scan_double_up(field);
+        }
+        Picture::free(field);
+        return ret;
+    } else {
+        return decode_full(frame);
+    }
+}
+
+static void interpolate_scanline(uint8_t *out, uint8_t *in1, uint8_t *in2, size_t len) {
+    uint16_t temp;
+    while (len > 0) {
+        temp = *in1;
+        temp += *in2;
+        temp >>= 1;
+        *out = temp;
+        in1++;
+        in2++;
+        out++;
+        len--;
+    }
+}
+
+/* in = odd scanlines. Generate the even ones by interpolation. */
+Picture *MJPEGDecoder::scan_double_up(Picture *in) {
+    int i, j;
+    Picture *out = Picture::alloc(in->w, 2*in->h, in->line_pitch);
+
+    // i counts even scanlines in the output, j counts input scanlines
+    for (i = 0, j = 0; i < out->h; i += 2, j++) {        
+        /* if we have two surrounding odd scanlines interpolate.
+         * otherwise, copy the odd scanline to the even one. */
+        if (j - 1 >= 0) {
+            interpolate_scanline(out->scanline(i), in->scanline(j - 1), in->scanline(j), in->line_pitch);
+        } else {
+            memcpy(out->scanline(i), in->scanline(j), in->line_pitch);
+        }
+
+        /* copy odd scanline from input (always) */
+        memcpy(out->scanline(i + 1), in->scanline(j), in->line_pitch);
+    }
+
+    return out;
+}
+
+/* in = even scanlines (0, 2, 4, 6, ...). Generate the odd ones by interpolation. */
+Picture *MJPEGDecoder::scan_double_down(Picture *in) {
+    int i, j;
+    Picture *out = Picture::alloc(in->w, 2*in->h, in->line_pitch);
+
+    // i counts even output scanlines. j counts input scanlines.
+    for (i = 0, j = 0; i < out->h; i += 2, j++) {
+        // Copy the even scanline.
+        memcpy(out->scanline(i), in->scanline(j), in->line_pitch);
+        
+        // Generate the following odd scanline by interpolation or copying.
+        if (j + 1 < in->h) {
+            // Generate the odd scanline from the two surrounding even ones
+            interpolate_scanline(out->scanline(i + 1), in->scanline(j), in->scanline(j + 1), in->line_pitch);
+        } else {
+            // last scanline doesn't have any below it so just copy it
+            memcpy(out->scanline(i + 1), in->scanline(j), in->line_pitch);
+        }
+    }
+
+    return out;
+}
+
+Picture *MJPEGDecoder::decode(void *data, size_t len) {
+    Picture *output;
         
     
     jpeg_mem_src(&cinfo, data, len);
@@ -140,7 +239,7 @@ struct picture *MJPEGDecoder::decode(void *data, size_t len) {
     jpeg_start_decompress(&cinfo);
 
     /* picture dimensions are calculated, so allocate */
-    output = alloc_picture(cinfo.output_width, cinfo.output_height,
+    output = Picture::alloc(cinfo.output_width, cinfo.output_height,
         cinfo.output_width * cinfo.output_components);
 
     uint8_t *data_ptr = output->data;
@@ -154,67 +253,6 @@ struct picture *MJPEGDecoder::decode(void *data, size_t len) {
     return output;
 }
 
-struct picture *MJPEGDecoder::alloc_picture(uint16_t w, uint16_t h, 
-        uint16_t line_pitch) {
-
-    struct picture *candidate;
-    size_t pic_size = h * line_pitch;
-
-    // See if we can get something off the free list.
-    if (!free_pictures.empty( )) {
-        candidate = free_pictures.front( );
-        free_pictures.pop_front( );
-
-        candidate->w = w;
-        candidate->h = h;
-        candidate->line_pitch = line_pitch;
-        if (candidate->alloc_size >= pic_size) {
-            return candidate;
-        } else {
-            candidate->data = 
-                (uint8_t *)align_realloc(candidate->data, pic_size);
-            if (!candidate->data) {
-                throw std::runtime_error("Allocation failed in MJPEGDecoder");
-            }
-            candidate->alloc_size = pic_size;
-            return candidate;
-        }
-    } else {
-        candidate = (struct picture *)malloc(sizeof(struct picture));
-        candidate->w = w;
-        candidate->h = h;
-        candidate->line_pitch = line_pitch;
-        candidate->data = 
-            (uint8_t *)malloc(pic_size);        
-        if (!candidate->data) {
-            throw std::runtime_error("Allocation failed in MJPEGDecoder");
-        }
-        candidate->alloc_size = pic_size;
-        return candidate;
-    }
-}
-
-void MJPEGDecoder::free_picture(struct picture *pic) {
-    if (free_pictures.size( ) >= FREELIST_MAX) {
-        // free the thing
-        free(pic->data);
-        free(pic);
-    } else {
-        free_pictures.push_back(pic);
-    }
-}
-
 MJPEGDecoder::~MJPEGDecoder( ) {
-    /* really free all the free pictures */
-    struct picture *pic;
-    while (!free_pictures.empty( )) {
-        pic = free_pictures.front( );
-        free_pictures.pop_front( );
-
-        free(pic->data);
-        free(pic);
-    }
-
-
     jpeg_destroy_decompress(&cinfo);
 }
