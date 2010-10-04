@@ -4,20 +4,19 @@
 #define OUT_FRAME_W 720
 #define OUT_FRAME_H 480
 
-#include "ffwrapper.h" /* for some convenient FFmpeg structures */
+#include "picture.h"
 
 /* 
  * For now: input format to these things:
- * 720x480 packed UYVY422
+ * pixel data as Picture object pointer
  * signed 16-bit 48khz stereo audio
  */
 
 class OutputAdapter {
 public:
     virtual void *GetFrameBuffer(void) = 0;
-    virtual void SetNextFrame(AVPicture *in_frame) = 0;
+    virtual void SetNextFrame(Picture *in_frame) = 0;
     virtual void SetNextAudio(short *samples, size_t len) = 0;
-    virtual void Flip(void) = 0;
     virtual bool ReadyForNextFrame(void) = 0;
     virtual bool ReadyForMoreAudio(void) = 0;
     virtual ~OutputAdapter( ) { }
@@ -145,7 +144,7 @@ public:
         return data;
     }
 
-    void SetNextFrame(AVPicture *in_frame) {
+    void SetNextFrame(Picture *in_frame) {
         // INTERESTING QUESTION: Does modifying a frame that has been 
         // scheduled have an effect on the output? The API documentation
         // is bad enough, that I don't really know.
@@ -153,9 +152,14 @@ public:
         int i;
         frame->GetBytes((void **) &data_ptr);
 
-        for (i = 0; i < 480; ++i) {
-            memcpy(data_ptr + 1440*i, in_frame->data[0] + in_frame->linesize[0]*i, 1440);
+        int blit_max_w = (in_frame->w < 720) ? in_frame->w : 720;
+        int blit_max_h = (in_frame->h < 480) ? in_frame->h : 480;
+
+        for (i = 0; i < blit_max_h; ++i) {
+            memcpy(data_ptr + 1440*i, in_frame->data + in_frame->line_pitch*i, 2*blit_max_w);
         }
+
+        ready_frame = false;
     }
 
     void SetNextAudio(short *sample_buf, size_t len) {
@@ -182,12 +186,6 @@ public:
         if (actual_frames < (len / sizeof(short) / N_CHANNELS)) {
             fprintf(stderr, "sent too large an audio block");
         }
-    }
-
-    void Flip(void) {
-        // just let the callback do the work??
-        //schedule_next_frame( );
-        ready_frame = false;
     }
 
     bool ReadyForNextFrame(void) {
@@ -373,20 +371,20 @@ public:
         return data;
     }
 
-    void SetNextFrame(AVPicture *in_frame) {
+    void SetNextFrame(Picture *in_frame) {
         int i;
 
-        for (i = 0; i < 480; ++i) {
-            memcpy(data + 1440*i, in_frame->data[0] + in_frame->linesize[0]*i, 1440);
+        int blit_max_w = (in_frame->w < 720) ? in_frame->w : 720;
+        int blit_max_h = (in_frame->h < 480) ? in_frame->h : 480;
+
+        for (i = 0; i < blit_max_h; ++i) {
+            memcpy(data + 1440*i, in_frame->data + in_frame->line_pitch*i, 2*blit_max_w);
         }
+        write(STDOUT_FILENO, data, 2*720*480);    
     }
 
     void SetNextAudio(short *samples, size_t len) {
         fprintf(stderr, "StdoutOutput::SetNextAudio( ): stub\n");
-    }
-
-    void Flip(void) {
-        write(STDOUT_FILENO, data, 2*720*480);    
     }
 
     bool ReadyForNextFrame(void) {

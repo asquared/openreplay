@@ -18,6 +18,7 @@
 #include "playout_ctl.h"
 #include "output_adapter.h"
 
+#include "mjpeg_frame.h"
 
 MmapBuffer *buffers[MAX_CHANNELS];
 int marks[MAX_CHANNELS];
@@ -127,7 +128,8 @@ void parse_command(struct playout_command *cmd) {
 
 int main(int argc, char *argv[]) {
     struct playout_command cmd;
-    static uint8_t frame_data[MAX_FRAME_SIZE];
+    struct mjpeg_frame *frame = 
+        (struct mjpeg_frame *)malloc(MAX_FRAME_SIZE);
     bool next_frame_ready = false;
     int i;
     size_t frame_size;
@@ -135,15 +137,11 @@ int main(int argc, char *argv[]) {
 
     timecode_t frame_no;
 
-    AVPicture *decoded_frame, *scaled_frame;
+    Picture *decoded;
 
     out = new DecklinkOutput(0);
 
-    // initialize decoder
-    FFwrapper::Decoder mjpeg_decoder( CODEC_ID_MJPEG );
-
-    // initialize scaler
-    FFwrapper::Scaler scaler(OUT_FRAME_W, OUT_FRAME_H, PIX_FMT_UYVY422); 
+    MJPEGDecoder mjpeg_decoder;
 
     // initialize buffers
     for (i = 0; i < argc - 1; ++i) {
@@ -153,8 +151,8 @@ int main(int argc, char *argv[]) {
     socket_setup( );
 
     // toss up a black frame until we're ready to go
-    memset(out->GetFrameBuffer( ), 0, 2*720*480);
-    out->Flip( );
+    //memset(out->GetFrameBuffer( ), 0, 2*720*480);
+
 
     // now, the interesting bits...
     while (1) {
@@ -162,28 +160,22 @@ int main(int argc, char *argv[]) {
             // Advance all streams one frame. Only decode on the one we care about.
             // (if nothing's open, this fails by design...)
             if (!paused || step || step_backward || did_cut) {
-                frame_size = sizeof(frame_data);                
+                frame_size = MAX_FRAME_SIZE;                
                 did_cut = false;
                 frame_no = marks[playout_source] + play_offset; // round to nearest whole frame
-                if (buffers[playout_source]->get(frame_data, &frame_size, frame_no)) {
+                if (buffers[playout_source]->get(frame, &frame_size, frame_no)) {
                     try {
-                        decoded_frame = mjpeg_decoder.try_decode(frame_data, frame_size);
-                        if (decoded_frame) {
-                            scaled_frame = scaler.scale(decoded_frame, mjpeg_decoder.get_ctx( ));
-                            next_frame_ready = true;
-                            if (step) {
-                                play_offset++;
-                            } else if (step_backward) {
-                                play_offset--;
-                            } else {
-                                play_offset += playout_speed;
-                            }
+                        decoded = mjpeg_decoder.decode_full(frame);
+                        next_frame_ready = true;
+                        if (step) {
+                            play_offset++;
+                        } else if (step_backward) {
+                            play_offset--;
+                        } else {
+                            play_offset += playout_speed;
                         }
-                    } catch (FFwrapper::CodecError e) {
+                    } catch (std::runtime_error e) {
                         fprintf(stderr, "codec error - pausing replay\n");
-                        paused = true;
-                    } catch (FFwrapper::AllocationError e) {
-                        fprintf(stderr, "out of memory - pausing replay\n");
                         paused = true;
                     }
                 } else {
@@ -205,8 +197,9 @@ int main(int argc, char *argv[]) {
         }
 
         if (out->ReadyForNextFrame( ) && next_frame_ready) {
-            out->SetNextFrame(scaled_frame);
-            out->Flip( );
+            Picture *uyvy8 = decoded->convert_to_format(UYVY8);
+            out->SetNextFrame(uyvy8);
+            Picture::free(uyvy8);
             next_frame_ready = false;
         } 
 

@@ -18,8 +18,8 @@ mjpeg_ingest: mjpeg_ingest.cpp mmap_buffer.cpp
 decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o decklink_capture decklink_capture.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS)
 
-playoutd: playoutd.cpp ffwrapper.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
-	$(CC) -o playoutd playoutd.cpp ffwrapper.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS) $(LAVC_INCLUDES) $(LAVC_LIBS) $(FFCFLAGS) $(FFLDFLAGS)
+playoutd: playoutd.cpp mjpeg_frame.cpp picture.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 field_split: field_split.cpp 
 	$(CC) -o field_split field_split.cpp $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
