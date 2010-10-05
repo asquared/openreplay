@@ -137,7 +137,10 @@ int main(int argc, char *argv[]) {
 
     timecode_t frame_no;
 
-    Picture *decoded;
+    /* generate blank picture */
+    Picture *blank = Picture::alloc(720, 480, 1440, UYVY8);
+    memset(blank->data, 0, 1440*480);
+    Picture *decoded = blank;
 
     out = new DecklinkOutput(0);
 
