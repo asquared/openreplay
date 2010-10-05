@@ -224,12 +224,11 @@ int main(int argc, char **argv) {
     uint8_t *audio_block;
     uint8_t *frame;
 
-    AVPicture pict;
+    /* These are the picture size values for NTSC UYVY8. For now, them's the breaks. */
+    Picture *uyvy_frame = Picture::alloc(720, 480, 1440, UYVY8);
     OutputAdapter *out;
 
     signal(SIGCHLD, SIG_IGN);
-
-    pict.linesize[0] = VIDEO_LINE_SIZE;
 
     out = new DecklinkOutput(0);
 
@@ -250,11 +249,10 @@ int main(int argc, char **argv) {
         if (out->ReadyForNextFrame( )) {
             frame = v_buffer.get_next_block( );
             if (frame) {
-                pict.data[0] = frame;
-                out->SetNextFrame(&pict);
-                v_buffer.done_with_block(frame);
+                memcpy(uyvy_frame->data, frame, VIDEO_FRAME_SIZE);
 
-                out->Flip( ); // this is rapidly becoming meaningless
+                out->SetNextFrame(uyvy_frame);
+                v_buffer.done_with_block(frame);
             }
         }
         if (aout->ReadyForMoreAudio( )) {
@@ -269,5 +267,5 @@ int main(int argc, char **argv) {
         PipeBuffer::update(buffer_list, 2);
     }
 
-    usleep(5000000);
+    usleep(5000000); // wait until Decklink output finishes?
 }

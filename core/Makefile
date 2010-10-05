@@ -24,8 +24,8 @@ playoutd: playoutd.cpp mjpeg_frame.cpp picture.cpp mmap_buffer.cpp $(SDK_PATH)/D
 field_split: field_split.cpp 
 	$(CC) -o field_split field_split.cpp $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
 
-ffoutput: ffoutput.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
-	$(CC) -o ffoutput ffoutput.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
+ffoutput: ffoutput.cpp picture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
 
 libjpeg_test: libjpeg_test.cpp mjpeg_frame.cpp picture.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
