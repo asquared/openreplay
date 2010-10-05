@@ -166,7 +166,7 @@ class PipeAudioOutput {
         }
         void SetNextAudio(short *samples, size_t len) {
             if (buf_size < len) {
-                data_buf = (uint8_t *)av_realloc(data_buf, len);
+                data_buf = (uint8_t *)realloc(data_buf, len);
                 if (!data_buf) {
                     throw std::runtime_error("allocation failure");
                 }

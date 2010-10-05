@@ -4,14 +4,11 @@
 #include <stdio.h>
 #include <stdexcept>
 #include <stdint.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <poll.h>
 #include <assert.h>
 #include <list>
-
-extern "C" {
-    #include "libavutil/avutil.h"
-}
 
 class PipeBuffer {
     public:
@@ -75,7 +72,7 @@ class PipeBuffer {
         }
 
         void done_with_block(uint8_t *block_ptr) {
-            av_free(block_ptr);
+            free(block_ptr);
         }
 
         bool at_eof( ) {
@@ -121,7 +118,7 @@ class PipeBuffer {
             
             // allocate new block if needed
             if (current_read_buf == NULL) {
-                current_read_buf = (uint8_t *)av_malloc(block_size);
+                current_read_buf = (uint8_t *)malloc(block_size);
                 read_so_far = 0;
                 if (current_read_buf == NULL) {
                     throw std::runtime_error("Failed to allocate new block");
@@ -136,7 +133,7 @@ class PipeBuffer {
                 throw std::runtime_error("failed to read from pipe");
             } else if (result == 0) {
                 /* EOF - throw away any partial block for now */
-                av_free(current_read_buf);
+                free(current_read_buf);
                 current_read_buf = NULL;
                 read_so_far = 0;
                 eof = true;

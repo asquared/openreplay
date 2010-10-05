@@ -4,28 +4,26 @@ CC=g++
 SDK_PATH=/home/armena/opt/bmd_sdk/Linux/include
 CFLAGS=-Wno-multichar -Wall -Wextra -I $(SDK_PATH) -fno-rtti -g -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -DENABLE_DECKLINK
 LDFLAGS=-lm -ldl -lpthread
-FFCFLAGS=`pkg-config libavcodec libavformat libswscale libavutil --cflags` 
-FFLDFLAGS=`pkg-config libavcodec libavformat libswscale libavutil --libs` -lavutil
 
-all: sdl_gui mjpeg_ingest playoutd decklink_capture
+all: sdl_gui mjpeg_ingest playoutd decklink_capture field_split ffoutput libjpeg_test time_libjpeg
 
 sdl_gui: sdl_gui.cpp mmap_buffer.cpp mjpeg_frame.cpp picture.cpp
-	$(CC) $(CFLAGS) $(FFCFLAGS) `sdl-config --cflags` -o $@ $^ $(LDFLAGS) $(FFLDFLAGS) `sdl-config --libs` -lSDL_image 
+	$(CC) $(CFLAGS) `sdl-config --cflags` -o $@ $^ $(LDFLAGS) `sdl-config --libs` -lSDL_image 
 
 mjpeg_ingest: mjpeg_ingest.cpp mmap_buffer.cpp
-	$(CC) -o mjpeg_ingest mjpeg_ingest.cpp mmap_buffer.cpp $(CFLAGS) $(LDFLAGS)
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
 decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
-	$(CC) -o decklink_capture decklink_capture.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp $(CFLAGS) $(LDFLAGS)
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
 playoutd: playoutd.cpp mjpeg_frame.cpp picture.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 field_split: field_split.cpp 
-	$(CC) -o field_split field_split.cpp $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
 ffoutput: ffoutput.cpp picture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
-	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) $(FFCFLAGS) $(FFLDFLAGS)
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
 libjpeg_test: libjpeg_test.cpp mjpeg_frame.cpp picture.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
@@ -34,4 +32,4 @@ time_libjpeg: time_libjpeg.cpp mjpeg_frame.cpp picture.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 clean:
-	rm -f raw_ingest ingest output
+	rm -f sdl_gui mjpeg_ingest decklink_capture playoutd field_split ffoutput libjpeg_test time_libjpeg

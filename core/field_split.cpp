@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <errno.h>
 
 void usage(void) {
     fprintf(stderr, "usage: \n");
