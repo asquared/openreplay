@@ -150,7 +150,14 @@ Picture *MJPEGDecoder::decode_first_doubled(mjpeg_frame *frame) {
         Picture::free(field);
         return ret;
     } else {
-        return decode_full(frame);
+        // scan double the appropriate scanlines from the full frame
+        Picture *out = decode_full(frame);
+        if (frame->odd_dominant) {
+            scan_double_full_frame_odd(out);
+        } else {
+            scan_double_full_frame_even(out);
+        }
+        return out;
     }
 }
 
@@ -166,7 +173,14 @@ Picture *MJPEGDecoder::decode_second_doubled(mjpeg_frame *frame) {
         Picture::free(field);
         return ret;
     } else {
-        return decode_full(frame);
+        // scan double the appropriate scanlines from the full frame
+        Picture *out = decode_full(frame);
+        if (frame->odd_dominant) {
+            scan_double_full_frame_even(out);
+        } else {
+            scan_double_full_frame_odd(out);
+        }
+        return out;
     }
 }
 
@@ -227,6 +241,31 @@ Picture *MJPEGDecoder::scan_double_down(Picture *in) {
     }
 
     return out;
+}
+
+void MJPEGDecoder::scan_double_full_frame_even(Picture *p) {
+    int i;    
+    for (i = 0; i < p->h; i += 2) {
+        if (i + 2 < p->h) {
+            /* have 2 scanlines, so interpolate */
+            interpolate_scanline(p->scanline(i + 1), p->scanline(i), p->scanline(i + 2), p->line_pitch);
+        } else {
+            memcpy(p->scanline(i + 1), p->scanline(i), p->line_pitch);
+        }
+    }
+}
+
+void MJPEGDecoder::scan_double_full_frame_odd(Picture *p) {
+    int i;
+    for (i = 1; i < p->h; i += 2) {
+        if (i - 2 >= 0) {
+            /* have 2 surrounding scanlines, so interpolate it */
+            interpolate_scanline(p->scanline(i - 1), p->scanline(i - 2), p->scanline(i), p->line_pitch);
+        } else {
+            /* copy the scanline up a row */
+            memcpy(p->scanline(i - 1), p->scanline(i), p->line_pitch);
+        }
+    }
 }
 
 Picture *MJPEGDecoder::decode(void *data, size_t len) {
