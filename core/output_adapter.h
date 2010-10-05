@@ -6,6 +6,10 @@
 
 #include "picture.h"
 
+#include <stdlib.h>
+#include <stdexcept>
+#include <string.h>
+
 /* 
  * For now: input format to these things:
  * pixel data as Picture object pointer
@@ -16,9 +20,7 @@ class OutputAdapter {
 public:
     virtual void *GetFrameBuffer(void) = 0;
     virtual void SetNextFrame(Picture *in_frame) = 0;
-    virtual void SetNextAudio(short *samples, size_t len) = 0;
     virtual bool ReadyForNextFrame(void) = 0;
-    virtual bool ReadyForMoreAudio(void) = 0;
     virtual ~OutputAdapter( ) { }
 };
 
@@ -46,8 +48,7 @@ int GenerateSine(int16_t *samples, int len, int n_ch, int offset, float f) {
 }
 
 class DecklinkOutput : public OutputAdapter, 
-    public IDeckLinkVideoOutputCallback, 
-    public IDeckLinkAudioOutputCallback {
+    public IDeckLinkVideoOutputCallback {
 public:
     // Magic framerate divisors for NTSC: timebase = 30000 ticks per second, frame duration = 1001 ticks
     // Magic framerate divisors for PAL 25FPS: timebase = 25 ticks per second, frame duration =  1 tick
@@ -55,7 +56,7 @@ public:
     DecklinkOutput(int cardIndex = 0) 
         : deckLink(0), deckLinkOutput(0), deckLinkIterator(0),
           displayMode(0), deckLinkConfig(0), frame_duration(1001), time_base(30000), 
-          frame_counter(0), sine_offset(0), ready_frame(true), rawaudio(NULL)
+          frame_counter(0), sine_offset(0), ready_frame(true) 
     {
         deckLinkIterator = CreateDeckLinkIteratorInstance( ); 
 	/* Connect to DeckLink card */
@@ -89,46 +90,20 @@ public:
 		throw std::runtime_error("Failed to create frame");
 	}
 
-        audio_buf = NULL;
-        audio_len = 0;
-        audio_actual_len = 0;
-
-        rawaudio=fopen("ffoutput_audio.raw", "w");
-        if (!rawaudio) {
-            throw std::runtime_error("failed to open raw audio output file");
-        }
-
-
         if (deckLinkOutput->SetScheduledFrameCompletionCallback(this) != S_OK) {
             throw std::runtime_error("Failed to set video frame completion callback!\n");
         }
 
-        // don't want, don't need audio callback
-        //if (deckLinkOutput->SetAudioCallback(this) != S_OK) {
-        //    throw std::runtime_error("Failed to set audio callback!\n");
-        //}
 
-        // enable audio and video output
+        // enable video output
 	if (deckLinkOutput->EnableVideoOutput(bmdModeNTSC, bmdVideoOutputFlagDefault) != S_OK) {
             throw std::runtime_error("Failed to enable video output!\n");
         }
 
-        if (deckLinkOutput->EnableAudioOutput(
-            bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 
-            N_CHANNELS, bmdAudioOutputStreamContinuous) != S_OK) {
-
-            throw std::runtime_error("Failed to open audio output!\n");
-
-        }
-
-        //deckLinkOutput->BeginAudioPreroll( );
-
-        short one_frame_zero_audio[3200] = {0};
 
         // Preroll a few black frames(??)
         for (int i = 0; i < 10; ++i) {
             schedule_next_frame( );
-            SetNextAudio(one_frame_zero_audio, 6400);
         }
 
         if (deckLinkOutput->StartScheduledPlayback(0, 100, 1.0) != S_OK) {
@@ -162,52 +137,10 @@ public:
         ready_frame = false;
     }
 
-    void SetNextAudio(short *sample_buf, size_t len) {
-        uint32_t actual_frames;
-
-        if (audio_len < len) {
-            audio_buf = (short *)av_realloc(audio_buf, len);
-            if (!audio_buf) {
-                audio_len = 0;
-                audio_actual_len = 0;
-                throw std::runtime_error("Failed to allocate more audio buffer");
-            }
-            audio_len = len;
-        }
-
-        memcpy(audio_buf, sample_buf, len);
-        audio_actual_len = len;
-        audio_ptr = 0;
-
-        /* schedule it and hope for the best */
-        deckLinkOutput->ScheduleAudioSamples(sample_buf, len / sizeof(short) / N_CHANNELS,
-            0, 0, &actual_frames);
-
-        if (actual_frames < (len / sizeof(short) / N_CHANNELS)) {
-            fprintf(stderr, "sent too large an audio block");
-        }
-    }
-
     bool ReadyForNextFrame(void) {
         return ready_frame;
     }
 
-    bool ReadyForMoreAudio(void) {
-        uint32_t number_buffered;
-
-        if (deckLinkOutput->GetBufferedAudioSampleFrameCount(&number_buffered) != S_OK) {
-            fprintf(stderr, "don't know how many samples we got\n");
-            return false; 
-        }
-
-        fprintf(stderr, "audio left: %u\n", number_buffered);
-
-        if (number_buffered < SCHEDULE_MORE_AUDIO_THRESHOLD) {
-            return true;
-        } else {
-            return false;
-        }
-    }
 
     ~DecklinkOutput(void) {
         if (deckLinkOutput != NULL) {
@@ -259,62 +192,6 @@ public:
         return S_OK;
     }
 
-    virtual HRESULT RenderAudioSamples(bool preroll) {
-#if 0
-        uint32_t number_buffered = 0;
-        uint32_t number_consumed = 0;
-        // 1/50 sec worth of zeros @ 48khz stereo = 960 samples. Leave some extra...
-        short zeros[64000];
-
-        fprintf(stderr, "RenderAudioSamples(%d)\n", preroll);
-
-        /* Generate 1000Hz sine */
-        sine_offset = GenerateSine(zeros, 64000/2, 2, sine_offset, 1000.0f);
-
-        if (deckLinkOutput->GetBufferedAudioSampleFrameCount(&number_buffered) != S_OK) {
-            fprintf(stderr, "don't know how many samples we got\n");
-            return S_OK; /* return something else? */
-        }
-
-        if (number_buffered < SCHEDULE_MORE_AUDIO_THRESHOLD) {
-            // consume what will be consumed...
-            //if (audio_ptr >= audio_actual_len) {
-                // zero out buffer and print warning
-                fwrite(zeros, 1, sizeof(zeros), rawaudio);
-                if (deckLinkOutput->ScheduleAudioSamples(
-                    (void *) zeros, sizeof(zeros) / sizeof(short) / N_CHANNELS,
-                    0, 0, &number_consumed) != S_OK) {
-
-                    fprintf(stderr, "warning: scheduling of (null) audio samples failed\n");
-                }
-            
-            #if 0
-            } else {
-                // Schedule what we've got.
-                if (deckLinkOutput->ScheduleAudioSamples(
-                    (void *) (audio_buf + audio_ptr), 
-                    (audio_actual_len - audio_ptr) / N_CHANNELS,
-                    0, 0, &number_consumed) != S_OK) {
-                
-                    fprintf(stderr, "warning: scheduling of audio samples failed\n");
-
-                } else {
-                    audio_ptr += (number_consumed * N_CHANNELS);
-                }
-            }
-            #endif
-        } else {
-            fprintf(stderr, "Not yet below water mark - not scheduling more audio\n");
-        }
-
-        if (preroll) {
-//            if (deckLinkOutput->StartScheduledPlayback(0, 100, 1.0) != S_OK) {
-//                throw std::runtime_error("Failed to start scheduled playback!\n");
-//            }
-        }
-#endif
-        return S_OK;
-    }
 
     /* stubs */
     HRESULT QueryInterface(REFIID iid, LPVOID *ppv) { return E_NOINTERFACE; }
@@ -341,10 +218,6 @@ protected:
     const char *string;
     bool ready_frame;
 
-    short *audio_buf;
-    size_t audio_len, audio_actual_len, audio_ptr;
-
-    FILE *rawaudio;
 
     void schedule_next_frame(void) {
         deckLinkOutput->ScheduleVideoFrame(frame, frame_counter * frame_duration, frame_duration, time_base);
@@ -383,15 +256,7 @@ public:
         write(STDOUT_FILENO, data, 2*720*480);    
     }
 
-    void SetNextAudio(short *samples, size_t len) {
-        fprintf(stderr, "StdoutOutput::SetNextAudio( ): stub\n");
-    }
-
     bool ReadyForNextFrame(void) {
-        return true;
-    }
-
-    bool ReadyForMoreAudio(void) {
         return true;
     }
 
