@@ -119,6 +119,10 @@ MmapBuffer::~MmapBuffer( ) {
     }
 }
 
+void MmapBuffer::on_fork( ) {
+    my_pid = getpid( );
+}
+
 void MmapBuffer::lock( ) {
     int counter = 0;
     while (__sync_bool_compare_and_swap(&(mmapped_ipc->lock_pid), 0, my_pid)) {

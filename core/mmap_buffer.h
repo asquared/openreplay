@@ -15,6 +15,8 @@ class MmapBuffer {
     timecode_t put(const void *data, size_t size);
     bool get(void *data, size_t *size, timecode_t timecode);
     timecode_t get_timecode(void);
+
+    void on_fork(void);
     
     private:
     volatile char *mmapped_data;
