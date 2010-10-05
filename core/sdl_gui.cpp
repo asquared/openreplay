@@ -179,6 +179,103 @@ void recall_mark(int n) {
     memcpy(marks, saved_marks[n], sizeof(int) * n_buffers);
 }
 
+void write_file_from_mark(int n = -1) {
+    int *mark_to_write = marks;
+    char time_str[256];
+    time_t tv;
+    struct tm *tm;
+    char *fn;
+    int i;
+    struct mjpeg_frame *frame;
+    int output_fd;
+    size_t frame_size;
+    timecode_t j;
+    ssize_t written;
+
+    pid_t child_pid;
+
+    if (n >= 0) {
+        if (n < saved_marks.size( )) {
+            mark_to_write = saved_marks[i];
+        } else {
+            log_message("failed to write\n");
+            log_message("no mark #%d\n");
+            return;
+        }
+    }
+
+
+    child_pid = fork( );
+    if (child_pid == -1) {
+        log_message("fork failed: can't write\n");
+        return;
+    }
+
+    if (child_pid == 0) {
+        /* child process */
+        tv = time(NULL);
+        tm = localtime(&tv);
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d-%H_%M_%S", tm);
+        time_str[sizeof(time_str) - 1] = 0;
+
+        frame = (struct mjpeg_frame *) malloc(MAX_FRAME_SIZE);
+        if (!frame) {
+            fprintf(stderr, "write child process: allocate failed\n");
+            exit(1);
+        }
+
+        /* for each camera feed */
+        for (i = 0; i < n_buffers; ++i) {
+            /* tell buffer we forked */
+            buffers[i]->on_fork( );
+
+            /* construct filename */
+            asprintf(&fn, "replay_save_%s_cam%d.mjpg", time_str, i + 1);
+
+            /* open output file */
+            output_fd = open(fn, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (output_fd < 0) {
+                perror("open output");
+                exit(1);
+            }
+
+            /* for each frame */
+            for (j = mark_to_write[i] - preroll;
+                   j < mark_to_write[i] + postroll; j++) {
+                /* get frame from buffer */
+                frame_size = MAX_FRAME_SIZE;
+                if (buffers[i]->get(frame, &frame_size, j)) {
+                    /* write frame to output file */
+                    written = write(output_fd, frame->data, frame->f1size);
+                    if (written < frame->f1size) {
+                        perror("write");
+                        exit(1);
+                    }
+                    if (frame->f2size > 0) {
+                        written = write(output_fd, frame->data + frame->f1size, frame->f2size);
+                        if (written < frame->f2size) {
+                            perror("write");
+                            exit(1);
+                        }
+                    }
+                } else {
+                    fprintf(stderr, "write: camera %d: could not get frame %d\n", i, j);
+                }
+            }
+            /* close output file */
+            close(output_fd);
+
+            /* free filename */
+            free(fn);
+        
+            exit(0);
+        }
+    } else {
+        /* parent process - just return and let child do its thing */
+        /* maybe someday we'll check for signals */
+    }
+}
+
 
 const char *timecode_fmt(int timecode) {
     int hr, min, sec, fr;
@@ -793,6 +890,13 @@ int main(int argc, char *argv[])
                             }
                             break;
 
+                        case SDLK_r:
+                            write_file_from_mark( );
+                            break;
+
+                        case SDLK_t:
+                            write_file_from_mark(consume_numeric_input( ));
+                            break;
 
                         case SDLK_x:
                         case SDLK_KP_MULTIPLY:
