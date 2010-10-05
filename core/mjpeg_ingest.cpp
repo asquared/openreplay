@@ -28,9 +28,14 @@ extern "C" {
 MmapBuffer *buffer;
 
 void usage(const char *name) {
-    fprintf(stderr, "usage: %s [-e|-o|--even-dominant|--odd-dominant] buffer_file\n", name);
+    fprintf(stderr, "usage: %s [-e|-o|--even-dominant|--odd-dominant] [-p|--progressive-input] buffer_file\n", name);
     fprintf(stderr, "    -e, --even-dominant: assume input is sequential fields in even-dominant order\n");
     fprintf(stderr, "    -o, --odd-dominant: assume input is sequential fields in odd-dominant order\n");
+    fprintf(stderr, "    -p, --progressive-input: assume input is interlaced fields with the specified dominance\n");
+    fprintf(stderr, "examples:\n");
+    fprintf(stderr, "    some_stream_of_frames | %s d1: input progressive scan video\n", name);
+    fprintf(stderr, "    some_stream_of_fields | %s -e d1: input separate fields in even-dominant order\n", name);
+    fprintf(stderr, "    some_stream_of_interlaced_frames | %s -o -p d1: input interlaced fields in odd-dominant order\n", name);
     fprintf(stderr, "default (with no options): assume input is progressive-scan frames\n");
 }
 
@@ -49,6 +54,7 @@ int main(int argc, char *argv[])
 
     /* The dominant field is input (and output, and stored) first. */
     bool dominant_field = true;
+    bool force_progressive_input = false;
 
     /* getopt stuff */
     const struct option options[] = {
@@ -63,12 +69,18 @@ int main(int argc, char *argv[])
             has_arg: 0,
             flag: NULL,
             val: 'e'
+        },
+        {
+            name: "progressive-input",
+            has_arg: 0,
+            flag: NULL,
+            val: 'p'
         }
     };
 
     int opt;
 
-    while ((opt = getopt_long(argc, argv, "eo", options, NULL)) != EOF) {
+    while ((opt = getopt_long(argc, argv, "eop", options, NULL)) != EOF) {
         switch (opt) {
             case 'e':
                 if (interlacing_mode == PROGRESSIVE) {
@@ -87,6 +99,9 @@ int main(int argc, char *argv[])
                     fprintf(stderr, "%s: odd and even dominance don't go together\n", argv[0]);
                     exit(1);
                 }
+                break;
+            case 'p':
+                force_progressive_input = true;
                 break;
             default:
                 usage(argv[0]);
@@ -114,6 +129,12 @@ int main(int argc, char *argv[])
         default:
             fprintf(stderr, "How did this happen?\n");
             exit(1);
+    }
+
+    if (force_progressive_input) {
+        /* keep the field dominance info, but otherwise go progressive */
+        interlacing_mode = PROGRESSIVE;
+        frame_buf->interlaced = false;
     }
 
 
