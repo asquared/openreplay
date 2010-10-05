@@ -196,10 +196,10 @@ void write_file_from_mark(int n = -1) {
 
     if (n >= 0) {
         if (n < saved_marks.size( )) {
-            mark_to_write = saved_marks[i];
+            mark_to_write = saved_marks[n];
         } else {
             log_message("failed to write\n");
-            log_message("no mark #%d\n");
+            log_message("no mark #%d\n", n);
             return;
         }
     }
