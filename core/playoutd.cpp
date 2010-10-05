@@ -168,7 +168,7 @@ int main(int argc, char *argv[]) {
                 frame_no = marks[playout_source] + play_offset; // round to nearest whole frame
                 if (buffers[playout_source]->get(frame, &frame_size, frame_no)) {
                     try {
-                        if (frame->interlaced && playout_speed <= 0.8) {
+                        if (playout_speed <= 0.8) {
                             // decode and scan double a field if we can get it
                             // (should get better temporal resolution on slow motion playout)
                             if (play_offset - floorf(play_offset) < 0.5) {
