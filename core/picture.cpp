@@ -106,21 +106,6 @@ Picture *Picture::to_uyvy8(void) {
     }
 }
 
-/* used for pixel format conversions */
-static uint8_t vector_multiply(uint8_t *src, const float vector[]) {
-    /* Apply the Optimization Process(tm) here first. */
-    float result;
-    result = src[0] * vector[0] + src[1] * vector[1] + src[2] * vector[2];
-    if (result < 0) {
-        return 0;
-    } else if (result > 255) {
-        return 255;
-    } else {
-        return (uint8_t) result;
-    }
-
-}
-
 Picture *Picture::rgb8_to_uyvy8(void) {
     int i, j;
     uint8_t r, g, b;
