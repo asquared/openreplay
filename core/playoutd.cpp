@@ -22,8 +22,7 @@
 
 MmapBuffer *buffers[MAX_CHANNELS];
 int marks[MAX_CHANNELS];
-int play_offset;
-int play_half;
+float play_offset;
 
 int socket_fd;
 struct sockaddr_in status_addr;
@@ -89,8 +88,7 @@ void parse_command(struct playout_command *cmd) {
             paused = true;
             playout_speed = cmd->new_speed;
             memcpy(marks, cmd->marks, sizeof(marks));
-            play_offset = 0;
-            play_half = 0;
+            play_offset = 0.0f;
             playout_source = cmd->source;
             break;
 
@@ -99,8 +97,7 @@ void parse_command(struct playout_command *cmd) {
             break;
 
         case PLAYOUT_CMD_CUT_REWIND:
-            play_offset = 0;
-            play_half = 0;
+            play_offset = 0.0f;
             // fall through to the cut...
         case PLAYOUT_CMD_CUT:
             playout_source = cmd->source;
@@ -174,24 +171,21 @@ int main(int argc, char *argv[]) {
                         if (playout_speed <= 0.8) {
                             // decode and scan double a field if we can get it
                             // (should get better temporal resolution on slow motion playout)
-                            if (play_half == 0) {
+                            if (play_offset - floorf(play_offset) < 0.5) {
                                 decoded = mjpeg_decoder.decode_first_doubled(frame);
-                                play_half = 1;
                             } else {
                                 decoded = mjpeg_decoder.decode_second_doubled(frame);
-                                play_half = 0;
                             }
                         } else {
-                            decoded = mjpeg_decoder.decode_first_doubled(frame);
-                            play_half = 0;
+                            decoded = mjpeg_decoder.decode_full(frame);
                         }
                         next_frame_ready = true;
                         if (step) {
                             play_offset++;
                         } else if (step_backward) {
                             play_offset--;
-                        } else if (play_half == 0) {
-                            play_offset++;
+                        } else {
+                            play_offset += playout_speed;
                         }
                     } catch (std::runtime_error e) {
                         fprintf(stderr, "codec error - pausing replay\n");
