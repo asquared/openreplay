@@ -18,7 +18,6 @@
 
 class OutputAdapter {
 public:
-    virtual void *GetFrameBuffer(void) = 0;
     virtual void SetNextFrame(Picture *in_frame) = 0;
     virtual bool ReadyForNextFrame(void) = 0;
     virtual ~OutputAdapter( ) { }
@@ -56,7 +55,7 @@ public:
     DecklinkOutput(int cardIndex = 0) 
         : deckLink(0), deckLinkOutput(0), deckLinkIterator(0),
           displayMode(0), deckLinkConfig(0), frame_duration(1001), time_base(30000), 
-          frame_counter(0), sine_offset(0), ready_frame(true) 
+          frame_counter(0), sine_offset(0)
     {
         deckLinkIterator = CreateDeckLinkIteratorInstance( ); 
 	/* Connect to DeckLink card */
@@ -82,13 +81,17 @@ public:
         }
 
 	// Create frame object
-	if (
-            deckLinkOutput->CreateVideoFrame(
-                720, 480, 1440, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame
-            ) != S_OK
-	) {
-		throw std::runtime_error("Failed to create frame");
-	}
+        for (int i = 0; i < 8; i++) {
+            IDeckLinkMutableVideoFrame *frame;
+            if (
+                deckLinkOutput->CreateVideoFrame(
+                    720, 480, 1440, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame
+                ) != S_OK
+            ) {
+                    throw std::runtime_error("Failed to create frame");
+            }
+            ready_frames.push_back(frame);
+        }
 
         if (deckLinkOutput->SetScheduledFrameCompletionCallback(this) != S_OK) {
             throw std::runtime_error("Failed to set video frame completion callback!\n");
@@ -102,7 +105,7 @@ public:
 
 
         // Preroll a few black frames(??)
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < 8; ++i) {
             schedule_next_frame( );
         }
 
@@ -113,18 +116,19 @@ public:
     }
 
 
-    void *GetFrameBuffer(void) {
-        void *data;
-        frame->GetBytes(&data);
-        return data;
-    }
-
     void SetNextFrame(Picture *in_frame) {
         // INTERESTING QUESTION: Does modifying a frame that has been 
         // scheduled have an effect on the output? The API documentation
         // is bad enough, that I don't really know.
         unsigned char *data_ptr;
         int i;
+
+        if (free_frames.empty( )) {
+            throw std::runtime_error("Can't set next frame when no frames free!");
+        }
+
+        IDeckLinkMutableVideoFrame *frame = free_frames.front( );
+        free_frames.pop_front( );
         frame->GetBytes((void **) &data_ptr);
 
         int blit_max_w = (in_frame->w < 720) ? in_frame->w : 720;
@@ -134,11 +138,12 @@ public:
             memcpy(data_ptr + 1440*i, in_frame->data + in_frame->line_pitch*i, 2*blit_max_w);
         }
 
-        ready_frame = false;
+        ready_frames.push_back(frame);
+
     }
 
     bool ReadyForNextFrame(void) {
-        return ready_frame;
+        return !free_frames.empty( );
     }
 
 
@@ -167,6 +172,9 @@ public:
 
     /* DeckLink delegate functions */
     virtual HRESULT ScheduledFrameCompleted(IDeckLinkVideoFrame *completed_frame, BMDOutputFrameCompletionResult result) {
+        IDeckLinkMutableVideoFrame *frame
+            = (IDeckLinkMutableVideoFrame *) completed_frame;
+        free_frames.push_back(frame);
         switch (result) {
             case bmdOutputFrameDisplayedLate:
                 fprintf(stderr, "WARNING: Decklink displayed frame late (running too slow!)\r\n");
@@ -182,7 +190,6 @@ public:
         }
 
         schedule_next_frame( );
-        ready_frame = true;
 
         return S_OK;
     }
@@ -205,7 +212,7 @@ protected:
     IDeckLinkIterator *deckLinkIterator;
     IDeckLinkDisplayMode *displayMode;
     IDeckLinkConfiguration *deckLinkConfig;
-    IDeckLinkMutableVideoFrame *frame;
+    IDeckLinkMutableVideoFrame *last_good_frame;
     BMDTimeValue frame_start, time_now;
 
     BMDTimeValue frame_duration;
@@ -216,12 +223,19 @@ protected:
 
     HRESULT result;
     const char *string;
-    bool ready_frame;
 
+    std::list<IDeckLinkMutableVideoFrame *> free_frames;
+    std::list<IDeckLinkMutableVideoFrame *> ready_frames;
 
     void schedule_next_frame(void) {
-        deckLinkOutput->ScheduleVideoFrame(frame, frame_counter * frame_duration, frame_duration, time_base);
-        frame_counter++;
+        if (ready_frames.empty( )) {
+            // do nothing - no frames available
+        } else {
+            IDeckLinkMutableVideoFrame *frame = ready_frames.front( );
+            ready_frames.pop_front( );
+            deckLinkOutput->ScheduleVideoFrame(frame, frame_counter * frame_duration, frame_duration, time_base);
+            frame_counter++;
+        }
     }
 
 };
