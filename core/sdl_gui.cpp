@@ -959,6 +959,20 @@ int main(int argc, char *argv[])
                             camera_set(evt.key.keysym.unicode - L'0');
                             break;
 
+                        case SDLK_F1:
+                            playout_speed_set(2);
+                            playout_speed_live_change( );
+                            break;
+
+                        case SDLK_F2:
+                            playout_speed_set(5);
+                            playout_speed_live_change( );
+                            break;
+
+                        case SDLK_F3:
+                            playout_speed_set(10);
+                            playout_speed_live_change( );
+                            break;
 
                         case SDLK_F4:
                             playout_speed_reverse( );
