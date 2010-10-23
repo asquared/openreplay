@@ -936,6 +936,11 @@ int main(int argc, char *argv[])
                             break;
 
                         case SDLK_END:
+                            /* by default, return from slow-mo on rewind */
+                            if (!(evt.key.keysym.mod & KMOD_CTRL)) {
+                                playout_speed_set(10);   
+                                playout_speed_live_change( );
+                            }
                             live_cut_and_rewind(camera_get( ));
                             break;
 
