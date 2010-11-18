@@ -13,6 +13,9 @@ sdl_gui: sdl_gui.cpp mmap_buffer.cpp mjpeg_frame.cpp picture.cpp
 mjpeg_ingest: mjpeg_ingest.cpp mmap_buffer.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
+uyvy_ingest: uyvy_ingest.cpp mmap_buffer.cpp picture.cpp mjpeg_frame.cpp stats.cpp
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
+
 decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 

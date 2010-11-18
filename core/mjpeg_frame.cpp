@@ -60,10 +60,124 @@ GLOBAL(void) jpeg_mem_src(j_decompress_ptr cinfo, void *data, size_t len) {
     cinfo->src->term_source = term_source;
 }
 
+struct mem_destination_mgr {
+    struct jpeg_destination_mgr pub;
+    uint8_t *data_ptr;
+    size_t total_len;
+    size_t *len_ptr;
+};
+
+METHODDEF(void) mem_init_destination(j_compress_ptr cinfo) {
+    mem_destination_mgr *dest = (mem_destination_mgr *)cinfo->dest;
+    dest->pub.next_output_byte = dest->data_ptr;
+    dest->pub.free_in_buffer = dest->total_len;
+}
+
+METHODDEF(boolean) mem_empty_output_buffer(j_compress_ptr cinfo) {
+    ERREXIT(cinfo, JERR_OUT_OF_MEMORY);
+}
+
+METHODDEF(void) mem_term_destination(j_compress_ptr cinfo) {
+    mem_destination_mgr *dest = (mem_destination_mgr *)cinfo->dest;
+    *(dest->len_ptr) = dest->total_len - dest->pub.free_in_buffer;
+}
+
+GLOBAL(void) jpeg_mem_dest(j_compress_ptr cinfo, void *data, size_t *len) {
+    mem_destination_mgr *dest;
+
+    if (cinfo->dest == NULL) {
+        cinfo->dest = (struct jpeg_destination_mgr *)
+            malloc(sizeof(mem_destination_mgr));
+    }
+
+    dest = (mem_destination_mgr *)cinfo->dest;
+
+    dest->pub.init_destination = mem_init_destination;
+    dest->pub.empty_output_buffer = mem_empty_output_buffer;
+    dest->pub.term_destination = mem_term_destination;
+    dest->data_ptr = (uint8_t *)data;
+    dest->total_len = *len;
+    dest->len_ptr = len;
+}
+
 METHODDEF(void) my_error_exit(j_common_ptr cinfo) {
     (*cinfo->err->output_message)(cinfo);
     /* return control to exception handler (or maybe crash spectacularly) */
     throw std::runtime_error("JPEG decode error");
+}
+
+MJPEGEncoder::MJPEGEncoder( ) {
+    memset(&cinfo, 0, sizeof(cinfo));
+    cinfo.err = jpeg_std_error(&jerr);
+    jerr.error_exit = my_error_exit;
+
+    jpeg_create_compress(&cinfo);
+
+    /* arbitrary constants, really... */
+    alloc_size = 131072;
+    quality = 95;
+
+    out_frame = (mjpeg_frame *) malloc(alloc_size + sizeof(mjpeg_frame));
+}
+
+mjpeg_frame *MJPEGEncoder::encode_full(Picture *pict, bool odd_dominant) {
+    Picture *p_to_use;
+    if (pict->pix_fmt == RGB8 || pict->pix_fmt == YUV8) {
+        p_to_use = pict;
+    } else if (pict->pix_fmt == UYVY8) {
+        p_to_use = pict->convert_to_format(YUV8);
+    } else {
+        // variation on the RGB theme??
+        p_to_use = pict->convert_to_format(RGB8);
+    }
+
+    cinfo.image_width = p_to_use->w;
+    cinfo.image_height = p_to_use->h;
+    /* TODO: make this a bit smarter when dealing with UYVY inputs */
+    cinfo.input_components = 3;
+    if (p_to_use->pix_fmt == YUV8) {
+        // just encode directly as YCbCr if we have it
+        cinfo.in_color_space = JCS_YCbCr;
+    } else if (p_to_use->pix_fmt = RGB8) {
+        cinfo.in_color_space = JCS_RGB;
+    } else {
+        throw std::runtime_error("Internal error - should never happen");
+    }
+
+    /* set up the frame structure */
+    out_frame->f1size = alloc_size;
+    out_frame->f2size = 0;
+    out_frame->odd_dominant = odd_dominant;
+
+    jpeg_mem_dest(&cinfo, &out_frame->data, &out_frame->f1size);
+
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, quality, TRUE);
+
+    jpeg_start_compress(&cinfo, TRUE);
+
+    while (cinfo.next_scanline < cinfo.image_height) {
+        JSAMPLE *scanline = (JSAMPLE *)p_to_use->scanline(cinfo.next_scanline);
+        jpeg_write_scanlines(&cinfo, &scanline, 1);
+    }
+
+    jpeg_finish_compress(&cinfo);
+
+    /* note (FIXME): could leak a Picture if we error out here */
+    if (p_to_use != pict) {
+        Picture::free(p_to_use);
+    }
+
+    return out_frame;
+}
+
+mjpeg_frame *MJPEGEncoder::encode_fields(Picture *f1, Picture *f2, bool odd_dominant) {
+    throw std::runtime_error("stub");
+}
+
+MJPEGEncoder::~MJPEGEncoder( ) {
+    jpeg_destroy_compress(&cinfo);
+    free(out_frame);
 }
 
 MJPEGDecoder::MJPEGDecoder( ) {
