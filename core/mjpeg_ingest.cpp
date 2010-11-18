@@ -171,7 +171,7 @@ int main(int argc, char *argv[])
                         frame_buf->f1size = j + 2 - start_of_frame;
                         frame_buf->f2size = 0;
                         memcpy(frame_buf->data, buf + start_of_frame, frame_buf->f1size);
-                        if (interlacing_mode != PROGRESSIVE) {
+                        if (interlacing_mode != PROGRESSIVE && !force_progressive_input) {
                             dominant_field = false;
                         }
                     } else {
