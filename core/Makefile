@@ -5,15 +5,18 @@ SDK_PATH=/home/armena/opt/bmd_sdk/Linux/include
 CFLAGS=-Wno-multichar -Wall -Wextra -I $(SDK_PATH) -fno-rtti -g -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -DENABLE_DECKLINK
 LDFLAGS=-lm -ldl -lpthread
 
-all: sdl_gui mjpeg_ingest playoutd decklink_capture field_split ffoutput libjpeg_test time_libjpeg
+all: sdl_gui mjpeg_ingest playoutd decklink_capture field_split ffoutput libjpeg_test time_libjpeg v4l2_ingest
 
 sdl_gui: sdl_gui.cpp mmap_buffer.cpp mjpeg_frame.cpp picture.cpp
-	$(CC) $(CFLAGS) `sdl-config --cflags` -o $@ $^ $(LDFLAGS) `sdl-config --libs` -lSDL_image 
+	$(CC) $(CFLAGS) `sdl-config --cflags` -o $@ $^ $(LDFLAGS) `sdl-config --libs` -lSDL_image -ljpeg
 
 mjpeg_ingest: mjpeg_ingest.cpp mmap_buffer.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
 uyvy_ingest: uyvy_ingest.cpp mmap_buffer.cpp picture.cpp mjpeg_frame.cpp stats.cpp
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
+
+v4l2_ingest: v4l2_ingest.cpp mmap_buffer.cpp picture.cpp mjpeg_frame.cpp stats.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp

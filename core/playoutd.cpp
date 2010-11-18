@@ -11,7 +11,6 @@
 #include <poll.h>
 #include <string.h>
 
-#include "ffwrapper.h"
 #include "mmap_buffer.h"
 #include "mjpeg_config.h"
 

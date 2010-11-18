@@ -75,6 +75,7 @@ METHODDEF(void) mem_init_destination(j_compress_ptr cinfo) {
 
 METHODDEF(boolean) mem_empty_output_buffer(j_compress_ptr cinfo) {
     ERREXIT(cinfo, JERR_OUT_OF_MEMORY);
+    return FALSE;
 }
 
 METHODDEF(void) mem_term_destination(j_compress_ptr cinfo) {
@@ -138,7 +139,7 @@ mjpeg_frame *MJPEGEncoder::encode_full(Picture *pict, bool odd_dominant) {
     if (p_to_use->pix_fmt == YUV8) {
         // just encode directly as YCbCr if we have it
         cinfo.in_color_space = JCS_YCbCr;
-    } else if (p_to_use->pix_fmt = RGB8) {
+    } else if (p_to_use->pix_fmt == RGB8) {
         cinfo.in_color_space = JCS_RGB;
     } else {
         throw std::runtime_error("Internal error - should never happen");

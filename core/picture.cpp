@@ -217,7 +217,7 @@ Picture *Picture::uyvy8_to_yuv8(void) {
         in_ptr = this->scanline(i);
         out_ptr = out->scanline(i);
 
-        for (j = 0; j < this->w; j++) {
+        for (j = 0; j < this->w; j+=2) {
             u = *in_ptr++;
             y1 = *in_ptr++;
             v = *in_ptr++;
