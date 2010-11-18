@@ -226,9 +226,7 @@ int main(int argc, char *argv[]) {
 
         if (try_receive(&cmd)) {
             parse_command(&cmd);
-        } else {
-            // nothing to do, go to sleep...
-            usleep(1000);
-        }
+        } 
+
     }
 }
