@@ -116,7 +116,7 @@ MJPEGEncoder::MJPEGEncoder( ) {
 
     /* arbitrary constants, really... */
     alloc_size = 131072;
-    quality = 95;
+    quality = 80;
 
     out_frame = (mjpeg_frame *) malloc(alloc_size + sizeof(mjpeg_frame));
 }
@@ -192,11 +192,11 @@ MJPEGDecoder::MJPEGDecoder( ) {
 
 }
 
-Picture *MJPEGDecoder::decode_full(mjpeg_frame *frame) {
+Picture *MJPEGDecoder::decode_full(mjpeg_frame *frame, enum pixel_format fmt) {
     Picture *f1, *f2, *out;
     if (frame->interlaced) {
-        f1 = decode_first(frame);
-        f2 = decode_second(frame);
+        f1 = decode_first(frame, fmt);
+        f2 = decode_second(frame, fmt);
         
         if (frame->odd_dominant) {
             out = weave(f2, f1);
@@ -207,7 +207,7 @@ Picture *MJPEGDecoder::decode_full(mjpeg_frame *frame) {
         Picture::free(f1);
         Picture::free(f2);
     } else {
-        out = decode(frame->data, frame->f1size);
+        out = decode(frame->data, frame->f1size, fmt);
     }
     return out;
 }
@@ -237,26 +237,26 @@ Picture *MJPEGDecoder::weave(Picture *even, Picture *odd) {
     return out;
 }
 
-Picture *MJPEGDecoder::decode_first(mjpeg_frame *frame) {
+Picture *MJPEGDecoder::decode_first(mjpeg_frame *frame, enum pixel_format fmt) {
     if (frame->interlaced) {
-        return decode(frame->data, frame->f1size);
+        return decode(frame->data, frame->f1size, fmt);
     } else {
-        return decode_full(frame);
+        return decode_full(frame, fmt);
     }
 }
 
-Picture *MJPEGDecoder::decode_second(mjpeg_frame *frame) {
+Picture *MJPEGDecoder::decode_second(mjpeg_frame *frame, enum pixel_format fmt) {
     if (frame->interlaced) {
-        return decode(frame->data + frame->f1size, frame->f2size);
+        return decode(frame->data + frame->f1size, frame->f2size, fmt);
     } else {
-        return decode_full(frame);
+        return decode_full(frame, fmt);
     }
 }
 
-Picture *MJPEGDecoder::decode_first_doubled(mjpeg_frame *frame) {
+Picture *MJPEGDecoder::decode_first_doubled(mjpeg_frame *frame, enum pixel_format fmt) {
     Picture *field, *ret;
     if (frame->interlaced) {
-        field = decode_first(frame);
+        field = decode_first(frame, fmt);
         if (frame->odd_dominant) {
             ret = scan_double_up(field);
         } else {
@@ -266,7 +266,7 @@ Picture *MJPEGDecoder::decode_first_doubled(mjpeg_frame *frame) {
         return ret;
     } else {
         // scan double the appropriate scanlines from the full frame
-        Picture *out = decode_full(frame);
+        Picture *out = decode_full(frame, fmt);
         if (frame->odd_dominant) {
             scan_double_full_frame_odd(out);
         } else {
@@ -276,10 +276,10 @@ Picture *MJPEGDecoder::decode_first_doubled(mjpeg_frame *frame) {
     }
 }
 
-Picture *MJPEGDecoder::decode_second_doubled(mjpeg_frame *frame) {
+Picture *MJPEGDecoder::decode_second_doubled(mjpeg_frame *frame, enum pixel_format fmt) {
     Picture *field, *ret;
     if (frame->interlaced) {
-        field = decode_second(frame);
+        field = decode_second(frame, fmt);
         if (frame->odd_dominant) {
             ret = scan_double_down(field);
         } else {
@@ -289,7 +289,7 @@ Picture *MJPEGDecoder::decode_second_doubled(mjpeg_frame *frame) {
         return ret;
     } else {
         // scan double the appropriate scanlines from the full frame
-        Picture *out = decode_full(frame);
+        Picture *out = decode_full(frame, fmt);
         if (frame->odd_dominant) {
             scan_double_full_frame_even(out);
         } else {
@@ -383,18 +383,26 @@ void MJPEGDecoder::scan_double_full_frame_odd(Picture *p) {
     }
 }
 
-Picture *MJPEGDecoder::decode(void *data, size_t len) {
+Picture *MJPEGDecoder::decode(void *data, size_t len, enum pixel_format fmt) {
     Picture *output;
         
     
     jpeg_mem_src(&cinfo, data, len);
     jpeg_read_header(&cinfo, TRUE);
 
+    if (fmt == RGB8) {
+        cinfo.out_color_space = JCS_RGB;
+    } else if (fmt == YUV8) {
+        cinfo.out_color_space = JCS_YCbCr;
+    } else {
+        throw std::runtime_error("Cannot decode to that pixel format");
+    }
+
     jpeg_start_decompress(&cinfo);
 
     /* picture dimensions are calculated, so allocate */
     output = Picture::alloc(cinfo.output_width, cinfo.output_height,
-        cinfo.output_width * cinfo.output_components);
+        cinfo.output_width * cinfo.output_components, fmt);
 
     uint8_t *data_ptr = output->data;
     while (cinfo.output_scanline < cinfo.output_height) {

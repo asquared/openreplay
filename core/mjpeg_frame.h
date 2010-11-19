@@ -47,12 +47,12 @@ class MJPEGDecoder {
     public:
         MJPEGDecoder( );
         ~MJPEGDecoder( );
-        Picture *decode_full(struct mjpeg_frame *frame);
-        Picture *decode_first(struct mjpeg_frame *frame);
-        Picture *decode_second(struct mjpeg_frame *frame);
+        Picture *decode_full(struct mjpeg_frame *frame, enum pixel_format fmt = RGB8);
+        Picture *decode_first(struct mjpeg_frame *frame, enum pixel_format fmt = RGB8);
+        Picture *decode_second(struct mjpeg_frame *frame, enum pixel_format fmt = RGB8);
         /* Scan doubling - e.g. for smooth slow motion */
-        Picture *decode_first_doubled(struct mjpeg_frame *frame);
-        Picture *decode_second_doubled(struct mjpeg_frame *frame);
+        Picture *decode_first_doubled(struct mjpeg_frame *frame, enum pixel_format fmt = RGB8);
+        Picture *decode_second_doubled(struct mjpeg_frame *frame, enum pixel_format fmt = RGB8);
     protected:
         /* These return a full-frame Picture given one field. */
         Picture *scan_double_up(Picture *in);
@@ -63,7 +63,7 @@ class MJPEGDecoder {
         /* Use odd scanlines to compute scan doubled picture. Discard the even ones. */
         void scan_double_full_frame_odd(Picture *p); 
 
-        Picture *decode(void *data, size_t len);
+        Picture *decode(void *data, size_t len, enum pixel_format fmt = RGB8);
         Picture *weave(Picture *even, Picture *odd);
         struct jpeg_decompress_struct cinfo;
         struct jpeg_error_mgr jerr;

@@ -30,6 +30,7 @@
 #define PVW_H 480
 
 SDL_Surface *screen, *frame_buf, *font;
+SDL_Surface *vscope_bg;
 
 #define FONT_CELL_W 14
 #define FONT_CELL_H 20
@@ -69,14 +70,144 @@ struct playout_status playout_status;
 #define PVW_FPF 3
 
 
-enum _display_mode { PREVIEW, LIVE, SEEK_MARK, SEEK_START } display_mode;
+enum _display_mode { PREVIEW, LIVE, SEEK_MARK, SEEK_START, LIVE_VECTOR, LIVE_WAVEFORM } display_mode;
+
+enum analyze { PICTURE, VECTOR, WAVEFORM };
 
 int socket_fd;
 struct sockaddr_in daemon_addr;
 
 void log_message(const char *fmt, ...);
 
-void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
+static void putpixel(SDL_Surface *output, int16_t x, int16_t y,
+    uint8_t r, uint8_t g, uint8_t b) {
+    
+    if (SDL_MUSTLOCK(output)) {
+        if (SDL_LockSurface(output) != 0) {
+            throw std::runtime_error("putpixel could not lock surface");
+        }
+    }
+
+    uint8_t *pixel_ptr = (uint8_t *) output->pixels;
+    pixel_ptr += (output->pitch * y);
+    pixel_ptr += (output->format->BytesPerPixel * x);
+
+    /* for now just hope it's RGB... */
+    pixel_ptr[0] = r;
+    pixel_ptr[1] = g;
+    pixel_ptr[2] = b;
+
+    if (SDL_MUSTLOCK(output)) {
+        SDL_UnlockSurface(output);
+    }
+}
+
+void render_vectorscope(SDL_Surface *output, Picture *p) {
+    Picture *p_use;
+
+    if (p->pix_fmt == YUV8) {
+        p_use = p;
+    } else {
+        fprintf(stderr, "vectorscope: warning: converting to YUV8 (slow)\n");
+        p_use = p->convert_to_format(YUV8);
+    }
+
+    /*
+     * draw vectorscope graticule (assume an image centered on U=0 V=0)
+     */
+
+    SDL_BlitSurface(vscope_bg, NULL, output, NULL);
+    
+    /* 
+     * downsample by 1/4 (every other pixel, every other line) 
+     * to cut down drawing time
+     */
+    uint8_t *pixel_ptr;
+    int i, j;
+    int8_t u, v;
+    int16_t u_ofs, v_ofs, u_scale, v_scale;
+    int32_t x, y;
+
+    u_ofs = output->w / 2;
+    v_ofs = output->h / 2;
+    u_scale = output->w / 2;
+    v_scale = output->h / 2;
+
+    /* assume graticule is square and centered on image */
+    if (v_scale > u_scale) {
+        v_scale = u_scale;
+    } else {
+        u_scale = v_scale;
+    }
+
+    for (i = 0; i < p_use->h; i++) {
+        pixel_ptr = p_use->scanline(i);
+
+        for (j = 0; j < p_use->w; j++) {
+            u = pixel_ptr[1] - 128;
+            v = 128 - pixel_ptr[2];
+
+            x = u;
+            x = x * u_scale / 128 + u_ofs;
+            y = v;
+            y = y * v_scale / 128 + v_ofs;
+            
+
+            putpixel(output, x, y, 255, 255, 255);
+            pixel_ptr += 3;
+        }
+    }
+
+    if (p_use != p) {
+        Picture::free(p_use);
+    }
+}
+
+void render_waveform(SDL_Surface *output, Picture *p) {
+    Picture *p_use;
+
+    if (p->pix_fmt == YUV8) {
+        p_use = p;
+    } else {
+        fprintf(stderr, "vectorscope: warning: converting to YUV8 (slow)\n");
+        p_use = p->convert_to_format(YUV8);
+    }
+
+    /*
+     * draw graticule 
+     */
+
+    /*SDL_BlitSurface(wfm_bg, NULL, output, NULL);*/
+    SDL_FillRect(output, NULL, 0); /* erase to black */
+    
+    /* 
+     * downsample by 1/4 (every other pixel, every other line) 
+     * to cut down drawing time
+     */
+    uint8_t *pixel_ptr;
+    int i, j;
+    int32_t x, y;
+    int16_t y_scale = 480;
+
+
+    for (i = 0; i < p_use->h; i++) {
+        pixel_ptr = p_use->scanline(i);
+
+        for (j = 0; j < p_use->w; j++) {
+            x = j;
+            y = (256 - pixel_ptr[0]) * y_scale / 256;
+
+            putpixel(output, x, y, 255, 255, 255);
+            pixel_ptr += 3;
+        }
+    }
+
+    if (p_use != p) {
+        Picture::free(p_use);
+    }
+}
+
+void draw_frame(MmapBuffer *buf, int x, int y, int tc, enum analyze analyze) {
     SDL_Rect rect;
     Picture *decoded;
     uint8_t *pixels;
@@ -102,31 +233,46 @@ void draw_frame(MmapBuffer *buf, int x, int y, int tc) {
         SDL_BlitSurface(frame_buf, 0, screen, &rect);
     } else {
         try {
-            decoded = mjpeg_decoder.decode_full(frame);
+            if (analyze == PICTURE) {
+                decoded = mjpeg_decoder.decode_full(frame, RGB8);
+            } else {
+                decoded = mjpeg_decoder.decode_full(frame, YUV8);
+            }
+
             if (decoded) {
                 /* transfer decoded data to SDL_Surface and blit onto screen */
                 /* (does it make more sense just to lock the screen surface?) */
-                if (SDL_MUSTLOCK(frame_buf)) {
-                    SDL_LockSurface(frame_buf);
-                }
                 
-                pixels = (uint8_t *)frame_buf->pixels;
-                if (decoded->w > PVW_W) {
-                    blit_w = PVW_W;
-                } else {
-                    blit_w = decoded->w;
-                }
+                if (analyze == PICTURE) {
+                    /* draw the picture */
+                    if (SDL_MUSTLOCK(frame_buf)) {
+                        SDL_LockSurface(frame_buf);
+                    }
 
-                for (i = 0; i < PVW_H && i < decoded->h; ++i) {
-                    memcpy(pixels, decoded->data + decoded->line_pitch * i, blit_w * 3);
-                    pixels += PVW_W * 3;
+                    pixels = (uint8_t *)frame_buf->pixels;
+                    if (decoded->w > PVW_W) {
+                        blit_w = PVW_W;
+                    } else {
+                        blit_w = decoded->w;
+                    }
+
+                    for (i = 0; i < PVW_H && i < decoded->h; ++i) {
+                        memcpy(pixels, decoded->data + decoded->line_pitch * i, blit_w * 3);
+                        pixels += PVW_W * 3;
+                    }
+
+                    if (SDL_MUSTLOCK(frame_buf)) {
+                        SDL_UnlockSurface(frame_buf);
+                    }
+                } else if (analyze == VECTOR) {
+                    /* render vectorscope display of image */
+                    render_vectorscope(frame_buf, decoded);
+                } else if (analyze == WAVEFORM) {
+                    render_waveform(frame_buf, decoded);
                 }
 
                 Picture::free(decoded);
 
-                if (SDL_MUSTLOCK(frame_buf)) {
-                    SDL_UnlockSurface(frame_buf);
-                }
 
                 SDL_BlitSurface(frame_buf, 0, screen, &rect);
 
@@ -624,6 +770,8 @@ void draw_tally(int x, int y, int r, int g, int b) {
     );
 }
 
+
+
 int main(int argc, char *argv[])
 {
         int x, y, j;
@@ -631,6 +779,8 @@ int main(int argc, char *argv[])
         // of the whole screen size... :-/
         int text_start_x;
         int flag = 0;
+        enum analyze analyze_mode = PICTURE;
+
         input = 0;
         joyseek_enabled = false;
 
@@ -651,6 +801,12 @@ int main(int argc, char *argv[])
         if (!font) {
             fprintf(stderr, "Failed to load font!");
             return 1;
+        }
+
+        vscope_bg = IMG_Load("vgraticule.bmp");
+
+        if (!vscope_bg) {
+            fprintf(stderr, "Could not load vectorscope graticule image. Vectorscope not available\n");
         }
 
 	if (argc < 2) {
@@ -719,17 +875,21 @@ int main(int argc, char *argv[])
 
                 /* Draw frames as appropriate for the current mode. */
                 if (display_mode == LIVE) {
-                    draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1); 
+                    draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1, PICTURE); 
+                } else if (display_mode == LIVE_VECTOR) {
+                    draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1, VECTOR);
+                } else if (display_mode == LIVE_WAVEFORM) {
+                    draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1, WAVEFORM);
                 } else if (display_mode == PREVIEW) {
-                    draw_frame(buffers[j], x, y, replay_ptrs[j]);
+                    draw_frame(buffers[j], x, y, replay_ptrs[j], PICTURE);
                     replay_ptrs[j] += PVW_FPF;
                     if (replay_ptrs[j] >= replay_ends[j]) {
                         display_mode = LIVE;
                     }
                 } else if (display_mode == SEEK_MARK) {
-                    draw_frame(buffers[j], x, y, marks[j]);
+                    draw_frame(buffers[j], x, y, marks[j], PICTURE);
                 } else if (display_mode == SEEK_START) {
-                    draw_frame(buffers[j], x, y, marks[j] - preroll);
+                    draw_frame(buffers[j], x, y, marks[j] - preroll, PICTURE);
                 }
 
 
@@ -760,6 +920,12 @@ int main(int argc, char *argv[])
 
             if (display_mode == LIVE) {
                 line_of_text(&x, &y, "LIVE PREVIEW");
+                line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
+            } else if (display_mode == LIVE_VECTOR) {
+                line_of_text(&x, &y, "LIVE VECTORSCOPE");
+                line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
+            } else if (display_mode == LIVE_WAVEFORM) {
+                line_of_text(&x, &y, "LIVE WAVEFORM");
                 line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
             } else if (display_mode == PREVIEW) {
                 line_of_text(&x, &y, "REPLAY PREVIEW");
@@ -1002,6 +1168,16 @@ int main(int argc, char *argv[])
 
                         case SDLK_ESCAPE:
 			    flag = 1;
+                            break;
+
+                        case SDLK_v: /* Vectorscope */
+                            if (vscope_bg) {
+                                display_mode = LIVE_VECTOR;
+                            }
+                            break;
+
+                        case SDLK_f: /* waveForm monitor */
+                            display_mode = LIVE_WAVEFORM;
                             break;
 			
                         /* suppress compiler warning */
