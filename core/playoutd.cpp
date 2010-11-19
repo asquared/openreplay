@@ -171,12 +171,12 @@ int main(int argc, char *argv[]) {
                             // decode and scan double a field if we can get it
                             // (should get better temporal resolution on slow motion playout)
                             if (play_offset - floorf(play_offset) < 0.5) {
-                                decoded = mjpeg_decoder.decode_first_doubled(frame);
+                                decoded = mjpeg_decoder.decode_first_doubled(frame, YUV8);
                             } else {
-                                decoded = mjpeg_decoder.decode_second_doubled(frame);
+                                decoded = mjpeg_decoder.decode_second_doubled(frame, YUV8);
                             }
                         } else {
-                            decoded = mjpeg_decoder.decode_full(frame);
+                            decoded = mjpeg_decoder.decode_full(frame, YUV8);
                         }
                         next_frame_ready = true;
                         if (step) {
