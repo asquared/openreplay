@@ -1,12 +1,68 @@
-OpenReplay: Open source video replay for Linux.
+OpenReplay: Open source video replay.
 
 Copyright (c) 2010, Andrew H. Armenia, RPI TV (www.rpitv.org).
-All rights reserved.
 
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
-    * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-    * Neither the name of RPI TV nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+Quick Setup Guide (see wiki at http://github.com/asquared/openreplay):
+
+initial setup:
+* Using a 64-bit kernel is recommended to enable large buffer use.
+* You will probably want a multi-tabbed terminal emulator.
+* If you're using it with PAL, you will have to do some hacking at the moment.
+* get libjpeg or libjpeg-turbo, SDL, and SDL_image 
+    (install development packages if necessary)
+* If using Blackmagic capture cards for video I/O (not V4L compatible):
+    get Blackmagic SDK
+    set SDK_PATH in core/Makefile
+    maybe edit uyvy_ingest.cpp to use 720x486 frame size (if it doesn't work)
+* If using other devices:
+    modify core/playoutd.cpp to use "StdoutOutput" class 
+    (instead of "DecklinkOutput")
+* from here: run 'make -C core'
+* put binaries somewhere on your PATH 
+    running 'export PATH=`pwd`/core:$PATH' is one way
+
+setup before every production:
+* Create capture buffer:
+    dd if=/dev/zero bs=1 count=1 seek=<xxx>G of=<your_buffer>
+    (replace <xxx> with desired size and <your_buffer> with a filename)
+* Start a Video4Linux capture into the buffer:
+    v4l2_ingest /dev/videoX <your_buffer>
+* Start a Decklink capture:
+    use Blackmagic Control Panel to set up input
+    decklink_capture <card_no> | uyvy_ingest <your_buffer>
+* Start playout process:
+    if using a Decklink capture card:
+        playoutd <your_buffer> ....
+    if using non-Decklink output: 
+        playoutd <your_buffer> .... | something_that_outputs_the_video
+    Note you can specify more than one buffer here if doing multicamera replay.
+* Start GUI:
+    sdl_gui <your_buffer> ....
+    Specify buffer files here in same order as passed to playoutd.
+
+operation:
+* Capture a replay:
+    When something interesting happens, hit keypad '+' key. Output should show the first frame.
+    Hit 'F12' to roll it. F9 pauses. F10/F11 = frame advance/reverse.
+
+updating:
+git pull
+make -C core
+(copy binaries if necessary)
+
+* See wiki for many additional features.
+
+
