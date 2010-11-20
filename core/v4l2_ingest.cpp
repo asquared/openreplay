@@ -28,6 +28,15 @@
 #include <asm/types.h>
 #include <linux/videodev2.h>
 
+/* make an odd-dominant frame from an even-dominant frame and the next frame */
+/* this works by copying odd scanlines from the "next" frame f1 into the "current" frame f2. */
+void make_odd_dominant(uint8_t *f1, uint8_t *f2, int scanline_pitch, int height) {
+    int j;
+    for (j = 0; j < height; j += 2) {
+        memcpy(f1 + scanline_pitch * j, f2 + scanline_pitch * j, scanline_pitch);
+    }
+}
+
 void usage(char *name) {
     fprintf(stderr, "usage: %s [-i input] /dev/videoX buffer", name);
 }
@@ -138,6 +147,14 @@ v4l2_open_device *open_v4l2(int argc, char * const *argv) {
         return NULL;
     }
 
+    if (ioctl(fd, VIDIOC_G_FMT, &fmt) == -1) {
+        perror("query capture format");
+        close(fd);
+        return NULL;
+    }
+
+    fprintf(stderr, "w=%d h=%d\n", fmt.fmt.pix.width, fmt.fmt.pix.height);
+
     /* set up mmap()-based I/O */
     req_buf.count = 4;
     req_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -149,8 +166,8 @@ v4l2_open_device *open_v4l2(int argc, char * const *argv) {
         return NULL;
     }
 
-    if (req_buf.count < 2) {
-        fprintf(stderr, "couldn't allocate at least 2 capture buffers...\n");
+    if (req_buf.count < 4) {
+        fprintf(stderr, "couldn't allocate at least 4 capture buffers...\n");
         close(fd);
         return NULL;
     }
@@ -225,7 +242,10 @@ int main(int argc, char **argv) {
     EncodeStats stats(29.97);
 
     struct v4l2_open_device *dev = open_v4l2(argc, argv);
-    struct v4l2_buffer v4lbuf;
+    struct v4l2_buffer v4lbuf, v4l_lastbuf;
+    v4l_lastbuf.index = -1;
+
+    int last_buf = -1;
 
     FILE *uyvy_test = fopen("test.uyvy", "w");
 
@@ -253,24 +273,39 @@ int main(int argc, char **argv) {
             perror("VIDIOC_DQBUF");
             return -1;
         }
+    
+        if (v4l_lastbuf.index == -1) {
+            memcpy(&v4l_lastbuf, &v4lbuf, sizeof(v4lbuf));
+        } else {
+            /* make an odd-dominant frame from 2 even-dominant frames */
+            make_odd_dominant(
+                (uint8_t *)dev->buffers[v4l_lastbuf.index], 
+                (uint8_t *)dev->buffers[v4lbuf.index], 
+                input->line_pitch, input->h
+            );
+            /* copy uyvy422 data */
+            memcpy(input->data, dev->buffers[v4l_lastbuf.index], input->line_pitch * input->h);
+            
+            /* pass buffer back to v4l2 driver */
+            if (ioctl(dev->fd, VIDIOC_QBUF, &v4l_lastbuf) == -1) {
+                perror("VIDIOC_QBUF");
+                return -1;
+            }
 
-        /* copy uyvy422 data */
-        memcpy(input->data, dev->buffers[v4lbuf.index], input->line_pitch * input->h);
+            memcpy(&v4l_lastbuf, &v4lbuf, sizeof(v4lbuf));
+        }
 
         //fwrite(dev->buffers[v4lbuf.index], 2*frame_w*frame_h, 1, stdout);
 
 
         // encode and store the data
         mjpeg_frame *frm = enc.encode_full(input, true);
+        frm->odd_dominant = true;
+        frm->interlaced = false;
         buf.put(frm, sizeof(struct mjpeg_frame) + frm->f1size);
         stats.output_bytes(frm->f1size);
         stats.finish_frames(1);
 
-        /* pass buffer back to v4l2 driver */
-        if (ioctl(dev->fd, VIDIOC_QBUF, &v4lbuf) == -1) {
-            perror("VIDIOC_QBUF");
-            return -1;
-        }
 
     }
 
