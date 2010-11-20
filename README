@@ -15,13 +15,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+Important License Note
+----------------------
+
+The license for the Blackmagic Design SDK essentially prohibits distribution
+of any binaries containing their code. So for now, only source distribution,
+or distribution of binaries not linked against the SDK, is legally permitted.
+
+Support
+-------
 Support is available on a volunteer basis is available by emailing: 
     openreplay@googlegroups.com.
 Please check the documentation sources including the wiki below,
 before contacting the group with your questions.
 
 Quick Setup Guide (see wiki at http://github.com/asquared/openreplay):
-
+----------------------------------------------------------------------
 initial setup:
 * Using a 64-bit kernel is recommended to enable large buffer use.
 * You will probably want a multi-tabbed terminal emulator.
