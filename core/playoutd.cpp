@@ -132,6 +132,9 @@ int main(int argc, char *argv[]) {
     bool next_frame_ready = false;
     bool did_pause = false;
     int i;
+
+    int watchdog = 0;
+
     size_t frame_size;
     struct playout_status status;
 
@@ -214,7 +217,13 @@ int main(int argc, char *argv[]) {
             out->SetNextFrame(uyvy8);
             Picture::free(uyvy8);
             next_frame_ready = false;
-        } 
+            watchdog = 0;
+        } else {
+            watchdog++;
+            if (watchdog > 2000) {
+                fprintf(stderr, "Serious WARNING! Output device seems to be hung!\n");
+            }
+        }
 
         // (try to) send status update
         status.valid = 1;
