@@ -775,10 +775,12 @@ void draw_tally(int x, int y, int r, int g, int b) {
 int main(int argc, char *argv[])
 {
         int x, y, j;
+        int xt, yt;
         // this kludge works if the video frame size isn't an even multiple
         // of the whole screen size... :-/
         int text_start_x;
         int flag = 0;
+        int display_cam;
         enum analyze analyze_mode = PICTURE;
 
         input = 0;
@@ -863,35 +865,51 @@ int main(int argc, char *argv[])
             x = TALLY_MARGIN;
             y = TALLY_MARGIN;
             text_start_x = 0;
-            for (j = 0; j < n_buffers; j++) {
+            for (j = 0; j < n_buffers && j < 4; j++) {
+                if (j == 0 && camera_get( ) >= 4) {
+                    display_cam = camera_get( );
+                } else {
+                    display_cam = j;
+                }
+
                 /* Draw tally indicators */
-                if (j == playout_status.active_source && playout_status.valid) {
+                if (display_cam == playout_status.active_source 
+                        && playout_status.valid) {
                     /* red "live" tally */
                     draw_tally(x, y, 255, 0, 0);
-                } else if (j == camera_get( )) {
+                } else if (display_cam == camera_get( )) {
                     /* green "preview" tally */
                     draw_tally(x, y, 0, 255, 0);
                 }
 
                 /* Draw frames as appropriate for the current mode. */
                 if (display_mode == LIVE) {
-                    draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1, PICTURE); 
+                    draw_frame(buffers[display_cam], x, y, 
+                        buffers[display_cam]->get_timecode( ) - 1, PICTURE); 
                 } else if (display_mode == LIVE_VECTOR) {
-                    draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1, VECTOR);
+                    draw_frame(buffers[display_cam], x, y, 
+                        buffers[display_cam]->get_timecode( ) - 1, VECTOR);
                 } else if (display_mode == LIVE_WAVEFORM) {
-                    draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1, WAVEFORM);
+                    draw_frame(buffers[display_cam], x, y, 
+                        buffers[display_cam]->get_timecode( ) - 1, WAVEFORM);
                 } else if (display_mode == PREVIEW) {
-                    draw_frame(buffers[j], x, y, replay_ptrs[j], PICTURE);
-                    replay_ptrs[j] += PVW_FPF;
-                    if (replay_ptrs[j] >= replay_ends[j]) {
+                    draw_frame(buffers[display_cam], x, y, 
+                        replay_ptrs[display_cam], PICTURE);
+                    replay_ptrs[display_cam] += PVW_FPF;
+                    if (replay_ptrs[display_cam] >= replay_ends[display_cam]) {
                         display_mode = LIVE;
                     }
                 } else if (display_mode == SEEK_MARK) {
-                    draw_frame(buffers[j], x, y, marks[j], PICTURE);
+                    draw_frame(buffers[display_cam], x, y, 
+                        marks[display_cam], PICTURE);
                 } else if (display_mode == SEEK_START) {
-                    draw_frame(buffers[j], x, y, marks[j] - preroll, PICTURE);
+                    draw_frame(buffers[display_cam], x, y, 
+                        marks[display_cam] - preroll, PICTURE);
                 }
 
+                xt = x;
+                yt = y;
+                line_of_text(&xt, &yt, "CAM %d", display_cam + 1);
 
                 x += frame_buf->w + 2*TALLY_MARGIN;
                 if (x + frame_buf->w > screen->w) {
