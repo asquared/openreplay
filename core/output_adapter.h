@@ -34,6 +34,8 @@ public:
 #include <stdio.h>
 #include <math.h>
 
+#define DECKLINK_N_FIFO 8
+
 /* Generate a 48khz sampled sine wave at frequency f */
 int GenerateSine(int16_t *samples, int len, int n_ch, int offset, float f) {
     int i, j;
@@ -81,7 +83,7 @@ public:
         }
 
 	// Create frame object
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < DECKLINK_N_FIFO; i++) {
             IDeckLinkMutableVideoFrame *frame;
             if (
                 deckLinkOutput->CreateVideoFrame(
@@ -105,7 +107,7 @@ public:
 
 
         // Preroll a few black frames(??)
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < DECKLINK_N_FIFO; ++i) {
             schedule_next_frame( );
         }
 

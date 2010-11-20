@@ -130,6 +130,7 @@ int main(int argc, char *argv[]) {
     struct mjpeg_frame *frame = 
         (struct mjpeg_frame *)malloc(MAX_FRAME_SIZE);
     bool next_frame_ready = false;
+    bool did_pause = false;
     int i;
     size_t frame_size;
     struct playout_status status;
@@ -161,54 +162,55 @@ int main(int argc, char *argv[]) {
         if (!next_frame_ready) {
             // Advance all streams one frame. Only decode on the one we care about.
             // (if nothing's open, this fails by design...)
-            if (!paused || step || step_backward || did_cut) {
-                frame_size = MAX_FRAME_SIZE;                
-                did_cut = false;
-                frame_no = marks[playout_source] + play_offset; // round to nearest whole frame
-                if (buffers[playout_source]->get(frame, &frame_size, frame_no)) {
-                    try {
-                        if (playout_speed <= 0.8) {
-                            // decode and scan double a field if we can get it
-                            // (should get better temporal resolution on slow motion playout)
-                            if (play_offset - floorf(play_offset) < 0.5) {
-                                decoded = mjpeg_decoder.decode_first_doubled(frame);
-                            } else {
-                                decoded = mjpeg_decoder.decode_second_doubled(frame);
-                            }
+
+            frame_size = MAX_FRAME_SIZE;                
+            did_cut = false;
+            frame_no = marks[playout_source] + play_offset; // round to nearest whole frame
+            if (buffers[playout_source]->get(frame, &frame_size, frame_no)) {
+                try {
+                    if (playout_speed <= 0.8 || paused) {
+                        Picture::free(decoded);
+                        decoded = NULL;
+
+                        // decode and scan double a field if we can get it
+                        // (should get better temporal resolution on slow motion playout)
+
+                        if (play_offset - floorf(play_offset) < 0.5) {
+                            decoded = mjpeg_decoder.decode_first_doubled(frame);
                         } else {
-                            decoded = mjpeg_decoder.decode_full(frame);
+                            decoded = mjpeg_decoder.decode_second_doubled(frame);
                         }
-                        next_frame_ready = true;
-                        if (step) {
-                            play_offset++;
-                        } else if (step_backward) {
-                            play_offset--;
-                        } else {
-                            play_offset += playout_speed;
-                        }
-                    } catch (std::runtime_error e) {
-                        fprintf(stderr, "codec error - pausing replay\n");
-                        paused = true;
+                    } else {
+                        decoded = mjpeg_decoder.decode_full(frame);
                     }
-                } else {
-                    fprintf(stderr, "off end of available video - pausing\n");
+                    next_frame_ready = true;
+                    if (step) {
+                        play_offset++;
+                    } else if (step_backward) {
+                        play_offset--;
+                    } else if (!paused) {
+                        play_offset += playout_speed;
+                    }
+                } catch (std::runtime_error e) {
+                    fprintf(stderr, "codec error - pausing replay\n");
                     paused = true;
                 }
+            } else {
+                fprintf(stderr, "off end of available video - pausing\n");
+                paused = true;
+            }
 
-                if (step) {
-                    step = false;
-                }
+            if (step) {
+                step = false;
+            }
 
-                if (step_backward) {
-                    step_backward = false;
-                }
-            } else if (paused) {
-                next_frame_ready = true;
+            if (step_backward) {
+                step_backward = false;
             }
 
         }
 
-        if (out->ReadyForNextFrame( ) && next_frame_ready) {
+        if (out->ReadyForNextFrame( ) && next_frame_ready && decoded != NULL) {
             Picture *uyvy8 = decoded->convert_to_format(UYVY8);
             out->SetNextFrame(uyvy8);
             Picture::free(uyvy8);
