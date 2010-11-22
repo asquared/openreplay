@@ -4,6 +4,7 @@
 #include "mutex.h"
 #include "condition.h"
 #include <list>
+#include <stdint.h>
 
 class EventHandler {
     public:

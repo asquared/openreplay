@@ -8,7 +8,7 @@ EventHandler::~EventHandler( ) {
 
 }
 
-void EventHandler::post_event(uint32_t event, void *arg, uint32_t priority = 0) {
+void EventHandler::post_event(uint32_t event, void *arg, uint32_t priority) {
     struct event_data evt;
     evt.event = event;
     evt.arg = arg;
@@ -30,7 +30,7 @@ uint32_t EventHandler::wait_event(void *&arg) {
 
         ret = queued_events.front( );
         queued_events.pop_front( );
-        arg = event.arg;
+        arg = ret.arg;
         return ret.event;
     }
 }

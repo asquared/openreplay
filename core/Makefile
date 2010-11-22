@@ -22,7 +22,7 @@ v4l2_ingest: v4l2_ingest.cpp mmap_buffer.cpp picture.cpp mjpeg_frame.cpp stats.c
 decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
-playoutd: playoutd.cpp mjpeg_frame.cpp picture.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
+playoutd: playoutd.cpp mjpeg_frame.cpp picture.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp thread.cpp mutex.cpp condition.cpp event_handler.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 field_split: field_split.cpp 

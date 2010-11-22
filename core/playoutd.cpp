@@ -19,6 +19,8 @@
 
 #include "mjpeg_frame.h"
 
+#include "thread.h"
+
 MmapBuffer *buffers[MAX_CHANNELS];
 int marks[MAX_CHANNELS];
 float play_offset;
@@ -33,6 +35,7 @@ bool step_backward = false;
 bool run_backward = false;
 float playout_speed;
 
+#define EVT_PLAYOUT_COMMAND_RECEIVED 0x00000001
 class CommandReceiver : public Thread {
     public:
         CommandReceiver(EventHandler *new_dest) : dest(new_dest) {
@@ -107,7 +110,7 @@ class StatusSocket {
     private:
         int socket_fd;
         struct sockaddr_in addr;
-}
+};
 
 OutputAdapter *out;
 
@@ -154,52 +157,69 @@ void parse_command(struct playout_command *cmd) {
     fprintf(stderr, "source is now... %d\n", playout_source);
 }
 
-Picture *render_next_frame(void) {
-    size_t frame_size;
-    timecode_t frame_no;
+class Renderer {
+    public:
+        Renderer( ) {
+            frame = (struct mjpeg_frame *) malloc(MAX_FRAME_SIZE);
+            if (frame == NULL) {
+                throw std::runtime_error("Renderer: failed to allocate storage");
+            }
+        }
 
-    Picture *decoded;
+        ~Renderer( ) {
+            free(frame);
+        }
 
-    // Advance all streams one frame. Only decode on the one we care about.
-    // (if nothing's open, this fails by design...)
-    frame_size = MAX_FRAME_SIZE;                
-    did_cut = false;
-    frame_no = marks[playout_source] + play_offset; // round to nearest whole frame
-    if (buffers[playout_source]->get(frame, &frame_size, frame_no)) {
-        try {
-            if (playout_speed <= 0.8 || paused) {
-                // decode and scan double a field if we can get it
-                // (should get better temporal resolution on slow motion playout)
-                if (play_offset - floorf(play_offset) < 0.5) {
-                    decoded = mjpeg_decoder.decode_first_doubled(frame);
-                } else {
-                    decoded = mjpeg_decoder.decode_second_doubled(frame);
+        Picture *render_next_frame(void) {
+            size_t frame_size;
+            timecode_t frame_no;
+
+            Picture *decoded;
+
+            // Advance all streams one frame. Only decode on the one we care about.
+            // (if nothing's open, this fails by design...)
+            frame_size = MAX_FRAME_SIZE;                
+            frame_no = marks[playout_source] + play_offset; // round to nearest whole frame
+
+            if (buffers[playout_source]->get(frame, &frame_size, frame_no)) {
+                try {
+                    if (playout_speed <= 0.8 || paused) {
+                        // decode and scan double a field if we can get it
+                        // (should get better temporal resolution on slow motion playout)
+                        if (play_offset - floorf(play_offset) < 0.5) {
+                            decoded = mjpeg_decoder.decode_first_doubled(frame);
+                        } else {
+                            decoded = mjpeg_decoder.decode_second_doubled(frame);
+                        }
+                    } else {
+                        decoded = mjpeg_decoder.decode_full(frame);
+                    }
+
+                    if (step) {
+                        play_offset++;
+                        step = false;
+                    } else if (step_backward) {
+                        play_offset--;
+                        step_backward = false;
+                    } else if (!paused) {
+                        play_offset += playout_speed;
+                    }
+
+                    return decoded;
+                } catch (std::runtime_error e) {
+                    fprintf(stderr, "Cannot decode frame\n");
+                    return NULL;
                 }
             } else {
-                decoded = mjpeg_decoder.decode_full(frame);
+                fprintf(stderr, "off end of available video\n");
+                return NULL;
             }
-
-            if (step) {
-                play_offset++;
-                step = false;
-            } else if (step_backward) {
-                play_offset--;
-                step_backward = false;
-            } else if (!paused) {
-                play_offset += playout_speed;
-            }
-
-            return decoded;
-        } catch (std::runtime_error e) {
-            fprintf(stderr, "Cannot decode frame\n");
-            return NULL;
         }
-    } else {
-        fprintf(stderr, "off end of available video\n");
-        return NULL;
-    }
 
-}
+    protected:
+        struct mjpeg_frame *frame;
+        MJPEGDecoder mjpeg_decoder;
+};
 
 int main(int argc, char *argv[]) {
     struct playout_command cmd;
@@ -213,13 +233,13 @@ int main(int argc, char *argv[]) {
     Picture *current_decoded, *last_decoded = blank;
 
     EventHandler evtq;
-    CommandReceiver recv(evtq);
+    CommandReceiver recv(&evtq);
     StatusSocket statsock;
     recv.start( );
 
-    out = new DecklinkOutput(evtq, 0);
+    out = new DecklinkOutput(&evtq, 0);
 
-    MJPEGDecoder mjpeg_decoder;
+    Renderer r;
 
     // initialize buffers
     for (i = 0; i < argc - 1; ++i) {
@@ -237,7 +257,7 @@ int main(int argc, char *argv[]) {
                 break;
             case EVT_OUTPUT_NEED_FRAME:
                 /* try to decode another frame */
-                current_decoded = render_next_frame( );
+                current_decoded = r.render_next_frame( );
                 if (current_decoded != NULL) {
                     /* get rid of the old frame if we got a new one */
                     if (last_decoded != blank) {
@@ -263,10 +283,5 @@ int main(int argc, char *argv[]) {
          * Remove it and see if issues go away??
          */
         statsock.send_status(status); 
-
-        if (try_receive(&cmd)) {
-            parse_command(&cmd);
-        } 
-
     }
 }
