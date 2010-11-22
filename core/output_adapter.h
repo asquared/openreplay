@@ -10,6 +10,11 @@
 #include <stdexcept>
 #include <string.h>
 
+#include "mutex.h"
+#include "event_handler.h"
+
+#define EVT_OUTPUT_NEED_FRAME 0x80000001
+
 /* 
  * For now: input format to these things:
  * pixel data as Picture object pointer
@@ -54,10 +59,10 @@ public:
     // Magic framerate divisors for NTSC: timebase = 30000 ticks per second, frame duration = 1001 ticks
     // Magic framerate divisors for PAL 25FPS: timebase = 25 ticks per second, frame duration =  1 tick
     // (I wish I was in Europe. This API would seem so much more elegant over there.)
-    DecklinkOutput(int cardIndex = 0) 
+    DecklinkOutput(EventHandler *new_evtq, int cardIndex = 0) 
         : deckLink(0), deckLinkOutput(0), deckLinkIterator(0),
           displayMode(0), deckLinkConfig(0), frame_duration(1001), time_base(30000), 
-          frame_counter(0), sine_offset(0)
+          frame_counter(0), sine_offset(0), evtq(new_evtq)
     {
         deckLinkIterator = CreateDeckLinkIteratorInstance( ); 
 	/* Connect to DeckLink card */
@@ -119,6 +124,7 @@ public:
 
 
     void SetNextFrame(Picture *in_frame) {
+        MutexLock lock(_mut);
         // INTERESTING QUESTION: Does modifying a frame that has been 
         // scheduled have an effect on the output? The API documentation
         // is bad enough, that I don't really know.
@@ -145,6 +151,7 @@ public:
     }
 
     bool ReadyForNextFrame(void) {
+        MutexLock lock(_mut);
         return !free_frames.empty( );
     }
 
@@ -176,7 +183,10 @@ public:
     virtual HRESULT ScheduledFrameCompleted(IDeckLinkVideoFrame *completed_frame, BMDOutputFrameCompletionResult result) {
         IDeckLinkMutableVideoFrame *frame
             = (IDeckLinkMutableVideoFrame *) completed_frame;
+        MutexLock lock(_mut);
+
         free_frames.push_back(frame);
+        evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
         switch (result) {
             case bmdOutputFrameDisplayedLate:
                 fprintf(stderr, "WARNING: Decklink displayed frame late (running too slow!)\r\n");
@@ -229,9 +239,13 @@ protected:
     std::list<IDeckLinkMutableVideoFrame *> free_frames;
     std::list<IDeckLinkMutableVideoFrame *> ready_frames;
 
+    EventHandler *evtq;
+    Mutex _mut;
+
     void schedule_next_frame(void) {
         if (ready_frames.empty( )) {
             // do nothing - no frames available
+            fprintf(stderr, "Decklink: dropped frame");
         } else {
             IDeckLinkMutableVideoFrame *frame = ready_frames.front( );
             ready_frames.pop_front( );
