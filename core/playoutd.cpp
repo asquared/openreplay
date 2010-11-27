@@ -123,7 +123,9 @@ void parse_command(struct playout_command *cmd) {
     fprintf(stderr, "source is now... %d\n", playout_source);
 }
 
-
+OutputAdapter *init_output(void) {
+    return new DecklinkOutput(0);
+}
 
 int main(int argc, char *argv[]) {
     struct playout_command cmd;
@@ -145,7 +147,7 @@ int main(int argc, char *argv[]) {
     memset(blank->data, 0, 1440*480);
     Picture *decoded = blank;
 
-    out = new DecklinkOutput(0);
+    out = init_output( );
 
     MJPEGDecoder mjpeg_decoder;
 
@@ -222,6 +224,9 @@ int main(int argc, char *argv[]) {
             watchdog++;
             if (watchdog > 2000) {
                 fprintf(stderr, "Serious WARNING! Output device seems to be hung!\n");
+                fprintf(stderr, "Automatically restarting output device...\n");
+                delete out;
+                out = init_output( );
             }
         }
 
