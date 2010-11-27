@@ -131,6 +131,14 @@ public:
         unsigned char *data_ptr;
         int i;
 
+        Picture *convert;
+
+        if (in_frame->pix_fmt != UYVY8) {
+            convert = in_frame->convert_to_format(UYVY8);
+        } else {
+            convert = in_frame;
+        }
+
         if (free_frames.empty( )) {
             throw std::runtime_error("Can't set next frame when no frames free!");
         }
@@ -143,10 +151,14 @@ public:
         int blit_max_h = (in_frame->h < 480) ? in_frame->h : 480;
 
         for (i = 0; i < blit_max_h; ++i) {
-            memcpy(data_ptr + 1440*i, in_frame->data + in_frame->line_pitch*i, 2*blit_max_w);
+            memcpy(data_ptr + 1440*i, convert->data + convert->line_pitch*i, 2*blit_max_w);
         }
 
         ready_frames.push_back(frame);
+
+        if (convert != in_frame) {
+            Picture::free(convert);
+        }
 
     }
 
