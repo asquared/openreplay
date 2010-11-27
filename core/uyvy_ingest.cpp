@@ -3,6 +3,7 @@
 #include "mmap_buffer.h"
 #include "picture.h"
 #include "stats.h"
+#include "mmap_state.h"
 
 #include <stdio.h>
 #include <unistd.h>
@@ -20,6 +21,7 @@ int main(int argc, char **argv) {
     stats.autoprint(60);
 
     MmapBuffer buf(argv[1], MAX_FRAME_SIZE, true);
+    MmapState clock_ipc("clock_ipc");
 
     /* DV = 720x480, capture card = 720x486 */
     int frame_w = 720, frame_h = 480;
@@ -51,6 +53,10 @@ int main(int argc, char **argv) {
         } else {
             // encode and store the data
             mjpeg_frame *frm = enc.encode_full(input, true);
+
+            // scoreboard clock input
+            clock_ipc.get(&frm->clock, sizeof(frm->clock));
+
             buf.put(frm, sizeof(struct mjpeg_frame) + frm->f1size);
             stats.output_bytes(frm->f1size);
             stats.finish_frames(1);

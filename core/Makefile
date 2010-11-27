@@ -13,10 +13,10 @@ sdl_gui: sdl_gui.cpp mmap_buffer.cpp mjpeg_frame.cpp picture.cpp
 mjpeg_ingest: mjpeg_ingest.cpp mmap_buffer.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
-uyvy_ingest: uyvy_ingest.cpp mmap_buffer.cpp picture.cpp mjpeg_frame.cpp stats.cpp
+uyvy_ingest: uyvy_ingest.cpp mmap_buffer.cpp picture.cpp mjpeg_frame.cpp stats.cpp mmap_state.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
-v4l2_ingest: v4l2_ingest.cpp mmap_buffer.cpp picture.cpp mjpeg_frame.cpp stats.cpp
+v4l2_ingest: v4l2_ingest.cpp mmap_buffer.cpp picture.cpp mjpeg_frame.cpp stats.cpp mmap_state.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
@@ -24,6 +24,9 @@ decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 
 playoutd: playoutd.cpp mjpeg_frame.cpp picture.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp thread.cpp mutex.cpp condition.cpp event_handler.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
+
+clockd: clockd.cpp mmap_state.cpp
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
 field_split: field_split.cpp 
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
