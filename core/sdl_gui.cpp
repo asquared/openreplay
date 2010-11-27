@@ -207,7 +207,7 @@ void render_waveform(SDL_Surface *output, Picture *p) {
     }
 }
 
-void draw_frame(MmapBuffer *buf, int x, int y, int tc, enum analyze analyze) {
+void draw_frame(MmapBuffer *buf, int x, int y, int tc, enum analyze analyze, uint32_t *scoreboard_clock = 0) {
     SDL_Rect rect;
     Picture *decoded;
     uint8_t *pixels;
@@ -232,6 +232,9 @@ void draw_frame(MmapBuffer *buf, int x, int y, int tc, enum analyze analyze) {
         SDL_FillRect(frame_buf, 0, 0);
         SDL_BlitSurface(frame_buf, 0, screen, &rect);
     } else {
+        if (scoreboard_clock != NULL) {
+            *scoreboard_clock = frame->clock;
+        }
         try {
             if (analyze == PICTURE) {
                 decoded = mjpeg_decoder.decode_full(frame, RGB8);
@@ -783,6 +786,8 @@ int main(int argc, char *argv[])
         int display_cam;
         enum analyze analyze_mode = PICTURE;
 
+        uint32_t sbc; /* score board clock */
+
         input = 0;
         joyseek_enabled = false;
 
@@ -885,7 +890,12 @@ int main(int argc, char *argv[])
                 /* Draw frames as appropriate for the current mode. */
                 if (display_mode == LIVE) {
                     draw_frame(buffers[display_cam], x, y, 
-                        buffers[display_cam]->get_timecode( ) - 1, PICTURE); 
+                        buffers[display_cam]->get_timecode( ) - 1, PICTURE, &sbc); 
+                    if (sbc > 60) {
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                    } else {
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                    }
                 } else if (display_mode == LIVE_VECTOR) {
                     draw_frame(buffers[display_cam], x, y, 
                         buffers[display_cam]->get_timecode( ) - 1, VECTOR);
@@ -894,17 +904,32 @@ int main(int argc, char *argv[])
                         buffers[display_cam]->get_timecode( ) - 1, WAVEFORM);
                 } else if (display_mode == PREVIEW) {
                     draw_frame(buffers[display_cam], x, y, 
-                        replay_ptrs[display_cam], PICTURE);
+                        replay_ptrs[display_cam], PICTURE, &sbc);
+                    if (sbc > 60) {
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                    } else {
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                    }
                     replay_ptrs[display_cam] += PVW_FPF;
                     if (replay_ptrs[display_cam] >= replay_ends[display_cam]) {
                         display_mode = LIVE;
                     }
                 } else if (display_mode == SEEK_MARK) {
                     draw_frame(buffers[display_cam], x, y, 
-                        marks[display_cam], PICTURE);
+                        marks[display_cam], PICTURE, &sbc);
+                    if (sbc > 60) {
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                    } else {
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                    }
                 } else if (display_mode == SEEK_START) {
                     draw_frame(buffers[display_cam], x, y, 
-                        marks[display_cam] - preroll, PICTURE);
+                        marks[display_cam] - preroll, PICTURE, &sbc);
+                    if (sbc > 60) {
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                    } else {
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                    }
                 }
 
                 xt = x;
