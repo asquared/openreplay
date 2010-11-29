@@ -13,12 +13,11 @@ class MmapState {
         void on_fork(void);
     
     private:
-        volatile char *mmapped_data;
-
         // mmap this thing into the buffer file so that we have shared data among all processes
         volatile struct control_data {
             uint32_t magic;
             pid_t lock_pid;
+            uint8_t data[0];
         } *mmapped_ipc;
 
         void lock( );

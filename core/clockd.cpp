@@ -16,9 +16,14 @@
 int main( ) {
     int socket_fd;
     struct sockaddr_in listen_addr;
+    struct ip_mreq mreq;
+
     int recvd;
     uint32_t clock;
     MmapState clock_ipc("clock_ipc");
+
+    inet_aton("239.160.181.93", &mreq.imr_multiaddr);
+    inet_aton("0.0.0.0", &mreq.imr_interface);
 
     memset(&listen_addr, 0, sizeof(listen_addr));
     listen_addr.sin_family = AF_INET;
@@ -31,8 +36,14 @@ int main( ) {
         exit(1);
     }
 
+
     if (bind(socket_fd, (struct sockaddr *)&listen_addr, sizeof(listen_addr)) == -1) {
         perror("bind");
+        exit(1);
+    }
+    
+    if (setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
+        perror("setsockopt");
         exit(1);
     }
 

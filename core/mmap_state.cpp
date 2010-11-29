@@ -35,7 +35,6 @@ MmapState::MmapState(const char *file) {
 
     data_fd = -1;
     mmapped_ipc = NULL;
-    mmapped_data = NULL;
 
     my_pid = getpid( );
 
@@ -51,7 +50,10 @@ MmapState::MmapState(const char *file) {
 
     /* mmap() the control data structure first */
     mmapped_ipc = (struct control_data *)
-        mmap(NULL, sizeof(struct control_data), PROT_READ | PROT_WRITE, MAP_SHARED, data_fd, 0);
+        mmap(
+            NULL, statbuf.st_size, 
+            PROT_READ | PROT_WRITE, MAP_SHARED, data_fd, 0
+        );
 
     if (mmapped_ipc == MAP_FAILED) {\
         perror("mmap");
@@ -67,27 +69,12 @@ MmapState::MmapState(const char *file) {
     }
 
     max_data = statbuf.st_size - sizeof(struct control_data);
-
-    /* 
-     * align data starting at 4k (page boundary) into the file
-     */
-    mmapped_data = (char *)
-        mmap(0, max_data, PROT_READ | PROT_WRITE, MAP_SHARED, data_fd, sizeof(struct control_data));
-
-    if (mmapped_data == MAP_FAILED) {
-        perror("mmap");
-        throw std::runtime_error("Failed to mmap data buffer");         
-    }
 }
 
 // Clean up the memory mappings.
 MmapState::~MmapState( ) {
-    if (0 != mmapped_data) {
-        munmap((void *)mmapped_data, max_data);
-    }
-
     if (0 != mmapped_ipc) {
-        munmap((void *)mmapped_ipc, sizeof(struct control_data));
+        munmap((void *)mmapped_ipc, max_data + sizeof(struct control_data));
     }
 
     if (-1 != data_fd) {
@@ -145,7 +132,7 @@ void MmapState::put(const void *data, size_t size) {
 
     lock( );
     /* to cast away volatile is OK since we're locked here */
-    memcpy((void *)mmapped_data, data, size);
+    memcpy((void *)mmapped_ipc->data, data, size);
     unlock( );
 }
 
@@ -153,7 +140,7 @@ void MmapState::get(void *data, size_t size) {
     assert(size < max_data);
 
     lock( );
-    memcpy(data, (void *)mmapped_data, size);
+    memcpy(data, (void *)mmapped_ipc->data, size);
     unlock( );
 }
 
