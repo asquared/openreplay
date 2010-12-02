@@ -269,5 +269,141 @@ Picture *Picture::yuv8_to_uyvy8(void) {
     return out;
 }
 
+int Picture::pixel_pitch(void) {
+    switch (pix_fmt) {
+        case A8:
+            pixel_pitch = 1;
+            break;
 
+        case UYVY8:
+            pixel_pitch = 2;
+            break;
+
+        case RGB8:
+        case YUV8:
+            pixel_pitch = 3;
+            break;
+
+        default:
+            throw std::runtime_error("cannot deal with that pixel format");
+            break;
+    }
+}
+
+/* god awful slow blit routine */
+void Picture::draw(Picture *src, uint16_fast_t x, uint16_fast_t y,
+        uint8_fast_t r, uint8_fast_t g, uint8_fast_t b) {
+    
+    int pixel_pitch;
+    uint16_fast_t blit_w, blit_h;
+    uint16_fast_t blit_y;
+    uint8_t *dst_start_ptr;
+
+    Picture *src_conv;
+
+    if (src->pix_fmt == A8) {
+        drawA8(src, x, y, r, g, b);
+        return;
+    } else if (src->pix_fmt == pix_fmt) {
+        src_conv = src;
+    } else {
+        src_conv = src->convert_to_format(pix_fmt);
+    }
+
+
+    blit_w = src->w;
+    blit_h = src->h;
+
+    if (x >= w || y >= h) {
+        return;
+    }
+
+    if (x + blit_w >= w) {
+        blit_w = w - x;
+    }
+
+    if (y + blit_h >= h) {
+        blit_h = h - y;
+    }
+
+    for (blit_y = 0; blit_y < blit_h; ++blit_y) {
+        dst_start_ptr = data + line_pitch * blit_y + pixel_pitch * x;
+        memcpy(dst_start_ptr, src->scanline(blit_y), pixel_pitch * blit_w);
+    }
+
+}
+
+
+void Picture::drawA8(Picture *src, uint16_fast_t x, uint16_fast_t y,
+        uint8_fast_t r, uint8_fast_t g, uint8_fast_t b) {
+
+    uint8_t blend_src[4];
+    int blend_pitch;
+    uint16_t y, u, v;
+    uint16_fast_t blit_w, blit_h, blit_x, blit_y;
+    uint16_fast_t blend;
+    uint8_t *src_ptr;
+    uint8_t alpha;
+    int j;
+
+    /* use Y'CbCr format in 2 cases below */
+    y = 16 + (r * 66 + g * 129 + b * 25) / 256;
+    u = 128 + (b * 112 - g * 74 - r * 37) / 256;
+    v = 128 + (r * 112 - g * 94 - b * 18) / 256;
+
+    switch (pix_fmt) {
+        case RGB8:
+            blend_src[0] = r;
+            blend_src[1] = g;
+            blend_src[2] = b;
+            blend_pitch = 3;
+            break;
+
+        case YUV8:
+            blend_src[0] = y;
+            blend_src[1] = u;
+            blend_src[2] = v;
+            blend_pitch = 3;
+            break;
+
+        case UYVY8:
+            throw std::runtime_error("this doesn't quite work yet");
+            blend_src[0] = u;
+            blend_src[1] = y;
+            blend_src[2] = v;
+            blend_src[3] = y;
+            blend_pitch = 4;
+            break;
+    }
+
+    blit_w = src->w;
+    blit_h = src->h;
+
+    if (x >= w || y >= h) {
+        return;
+    }
+
+    if (x + blit_w >= w) {
+        blit_w = w - x;
+    }
+
+    if (y + blit_h >= h) {
+        blit_h = h - y;
+    }
+
+    for (blit_y = 0; blit_y < blit_h; ++blit_y) {
+        src_ptr = src->scanline(blit_y);
+        my_ptr = scanline(blit_y) + pixel_pitch( ) * x;
+        for (blit_x = 0; blit_x < blit_w; ++blit_x) {
+            alpha = src_ptr[blit_x];
+            for (j = 0; j < blend_pitch; ++j) {
+                /* alpha blending each pixel */
+                blend = (alpha * *my_ptr + (256 - alpha) * blend_src[j]) / 256;
+                *my_ptr = blend;
+                ++my_ptr;
+            }
+        }
+    }
+    
+}
 std::list<Picture *> Picture::free_list;

@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 enum pixel_format {
-    RGB8, UYVY8, YUV8
+    RGB8, UYVY8, YUV8, A8
 };
 
 class Picture {
@@ -24,8 +24,14 @@ class Picture {
             enum pixel_format pix_fmt = RGB8);
         static Picture *copy(Picture *src);
         static void free(Picture *pic);
+
+        int pixel_pitch(void);
         
         Picture *convert_to_format(enum pixel_format pix_fmt);
+
+        /* approximate some sort of fast blit (from A8 surface, color fill) */
+        void draw(Picture *src, uint16_fast_t x, uint16_fast_t y,
+            uint8_fast_t r, uint8_fast_t g, uint8_fast_t b);
     protected:
         Picture( );
         Picture *to_rgb8(void);
@@ -40,6 +46,9 @@ class Picture {
         static std::list<Picture *> free_list;
 
         void alloc_data(size_t size);
+
+        void drawA8(Picture *src, uint16_fast_t x, uint16_fast_t y,
+            uint8_fast_t r, uint8_fast_t g, uint8_fast_t b);
 };
 
 #endif
