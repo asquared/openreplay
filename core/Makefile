@@ -2,8 +2,17 @@
 
 CC=g++
 SDK_PATH=/home/armena/opt/bmd_sdk/Linux/include
-CFLAGS=-Wno-multichar -Wall -Wextra -I $(SDK_PATH) -fno-rtti -g -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -DENABLE_DECKLINK -O3
-LDFLAGS=-lm -ldl -lpthread
+CFLAGS=-Wno-multichar -Wall -Wextra -I $(SDK_PATH) -fno-rtti -g -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -DENABLE_DECKLINK `pkg-config --cflags freetype2`
+LDFLAGS=-lm -ldl -lpthread `pkg-config --libs freetype2`
+
+CFLAGS += -DHAVE_PANGOCAIRO
+CFLAGS += `pkg-config --cflags cairo`
+CFLAGS += `pkg-config --cflags pango`
+CFLAGS += `pkg-config --cflags pangocairo`
+
+LDFLAGS += `pkg-config --libs cairo`
+LDFLAGS += `pkg-config --libs pango`
+LDFLAGS += `pkg-config --libs pangocairo`
 
 all: sdl_gui mjpeg_ingest playoutd decklink_capture field_split ffoutput libjpeg_test time_libjpeg v4l2_ingest
 

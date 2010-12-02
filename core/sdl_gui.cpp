@@ -983,7 +983,10 @@ int main(int argc, char *argv[])
                 
             if (playout_status.valid) {
                 line_of_text(&x, &y, "PLAYOUT: %s", timecode_fmt(playout_status.timecode));
-                line_of_text(&x, &y, "PLAYOUT SOURCE: CAM %d", playout_status.active_source);
+                line_of_text(
+                    &x, &y, "PLAYOUT SOURCE: CAM %d (CLOCK %s)", 
+                    playout_status.active_source + 1, playout_status.clock_on? "ON" : "OFF"
+                );
             } else {
                 line_of_text(&x, &y, "PLAYOUT SERVER NOT RUNNING??");
                 line_of_text(&x, &y, "STATUS UNKNOWN");
@@ -1227,9 +1230,13 @@ int main(int argc, char *argv[])
                         case SDLK_F12:
                             do_playout_cmd(PLAYOUT_CMD_RESUME);
                             break;
+                        
+                        case SDLK_b:
+                            do_playout_cmd(PLAYOUT_CMD_CLOCK_TOGGLE);
+                            break;
 
                         case SDLK_ESCAPE:
-			    flag = 1;
+            			    flag = 1;
                             break;
 
                         case SDLK_v: /* Vectorscope */

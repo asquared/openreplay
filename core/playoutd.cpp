@@ -34,6 +34,7 @@ bool step = false;
 bool step_backward = false;
 bool run_backward = false;
 float playout_speed;
+bool overlay_clock = false;
 
 #define EVT_PLAYOUT_COMMAND_RECEIVED 0x00000001
 class CommandReceiver : public Thread {
@@ -152,6 +153,18 @@ void parse_command(struct playout_command *cmd) {
         case PLAYOUT_CMD_STEP_BACKWARD:
             step_backward = true;
             break;
+
+        case PLAYOUT_CMD_CLOCK_TOGGLE:
+            overlay_clock = !overlay_clock;
+            break;
+
+        case PLAYOUT_CMD_CLOCK_ON:
+            overlay_clock = true;
+            break;
+
+        case PLAYOUT_CMD_CLOCK_OFF:
+            overlay_clock = false;
+            break;
     }
 
     fprintf(stderr, "source is now... %d\n", playout_source);
@@ -164,6 +177,7 @@ class Renderer {
             if (frame == NULL) {
                 throw std::runtime_error("Renderer: failed to allocate storage");
             }
+            clock_bg = Picture::from_png("hb3_replayclock.png");
         }
 
         ~Renderer( ) {
@@ -173,8 +187,10 @@ class Renderer {
         Picture *render_next_frame(void) {
             size_t frame_size;
             timecode_t frame_no;
+            uint32_t clock_value;
 
             Picture *decoded;
+            Picture *clock_image;
 
             // Advance all streams one frame. Only decode on the one we care about.
             // (if nothing's open, this fails by design...)
@@ -205,6 +221,27 @@ class Renderer {
                         play_offset += playout_speed;
                     }
 
+                    if (overlay_clock) {
+                        clock_value = frame->clock;
+                        clock_image = Picture::copy(clock_bg);
+                        clock_image->set_font("sans", 30);
+                        if (clock_value >= 600) {
+                            clock_image->render_text(
+                                20, 0, "%d:%02d\n",
+                                clock_value / 600, (clock_value / 10) % 60
+                            );
+                        } else {
+                            clock_image->render_text(
+                                20, 0, ":%02d.%d\n",
+                                clock_value / 10, clock_value % 10
+                            );
+                        }
+
+                        decoded->draw(clock_image, 25, 25, 0, 0, 0);
+
+                        Picture::free(clock_image);
+                    }
+
                     return decoded;
                 } catch (std::runtime_error e) {
                     fprintf(stderr, "Cannot decode frame\n");
@@ -214,11 +251,13 @@ class Renderer {
                 fprintf(stderr, "off end of available video\n");
                 return NULL;
             }
+
         }
 
     protected:
         struct mjpeg_frame *frame;
         MJPEGDecoder mjpeg_decoder;
+        Picture *clock_bg;
 };
 
 int main(int argc, char *argv[]) {
@@ -277,6 +316,7 @@ int main(int argc, char *argv[]) {
         // timecode is always relative to stream 0
         status.timecode = marks[0] + play_offset;
         status.active_source = playout_source;
+        status.clock_on = overlay_clock;
 
         /* 
          * note this could block the process! 

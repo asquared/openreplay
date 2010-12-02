@@ -5,6 +5,7 @@
 #include <string.h>
 #include <assert.h>
 #include <malloc.h> // memalign
+#include <stdarg.h>
 
 #define align_malloc malloc
 #define align_realloc realloc
@@ -16,6 +17,9 @@
 
 Picture::Picture( ) {
     data = NULL;
+#ifdef HAVE_PANGOCAIRO
+    font_description = NULL;
+#endif
 }
 
 void Picture::alloc_data(size_t size) {
@@ -53,9 +57,18 @@ Picture *Picture::copy(Picture *src) {
     return dest;
 }
 
+Picture::~Picture( ) {
+    if (data) {
+        ::free(data);
+    }
+
+    if (font_description) {
+        pango_font_description_free(font_description);
+    }
+}
+
 void Picture::free(Picture *pic) {
     if (free_list.size( ) >= FREELIST_MAX) {
-        ::free(pic->data);
         delete pic;
     } else {
         free_list.push_back(pic);
@@ -72,6 +85,9 @@ Picture *Picture::convert_to_format(enum pixel_format pix_fmt) {
 
         case YUV8:
             return to_yuv8( );
+
+        case YUVA8:
+            return to_yuva8( );
 
         default:
             throw std::runtime_error("Unknown pixel format requested");
@@ -120,6 +136,22 @@ Picture *Picture::to_yuv8(void) {
     }
 }
 
+Picture *Picture::to_yuva8(void) {
+    switch (this->pix_fmt) {
+        case BGRA8:
+            return bgra8_to_yuva8( );
+        case YUVA8:
+            return Picture::copy(this);
+
+        default:
+            throw std::runtime_error("Cannot convert this format to YUVA8");
+    }
+
+    return NULL; /* suppress a meaningless warning - the switch either returns or throws */
+}
+
+#undef CLAMP
+#undef SCLAMP
 #define CLAMP(x) ( (x < 256) ? x : 0 )
 #define SCLAMP(x) ( (x > 0) ? CLAMP(x) : 0 )
 
@@ -160,6 +192,37 @@ Picture *Picture::rgb8_to_uyvy8(void) {
             *out_ptr++ = y1;
             *out_ptr++ = v;
             *out_ptr++ = y2;
+        }
+    }
+    
+    return out;
+}
+
+Picture *Picture::bgra8_to_yuva8(void) {
+    int i, j;
+    uint8_t r, g, b, a;
+    uint16_t y, u, v;
+
+    Picture *out = Picture::alloc(this->w, this->h, 4*this->w, YUVA8);
+    uint8_t *pix_ptr, *out_ptr;
+
+    for (i = 0; i < this->h; i++) {
+        pix_ptr = this->scanline(i);
+        out_ptr = out->scanline(i);
+        for (j = 0; j < this->w; j++) {            
+            b = *pix_ptr++;
+            g = *pix_ptr++;
+            r = *pix_ptr++;
+            a = *pix_ptr++;
+
+            y = 16 + (r * 66 + g * 129 + b * 25) / 256;
+            u = 128 + (b * 112 - g * 74 - r * 37) / 256;
+            v = 128 + (r * 112 - g * 94 - b * 18) / 256;
+
+            *out_ptr++ = y;
+            *out_ptr++ = u;
+            *out_ptr++ = v;
+            *out_ptr++ = a;
         }
     }
     
@@ -208,7 +271,6 @@ Picture *Picture::uyvy8_to_rgb8(void) {
 
 Picture *Picture::uyvy8_to_yuv8(void) {
     int i, j;
-    int16_t r, g, b;
     uint8_t u, y1, v, y2;
     Picture *out = Picture::alloc(this->w, this->h, 3*this->w, YUV8);
     uint8_t *in_ptr, *out_ptr;
@@ -272,17 +334,14 @@ Picture *Picture::yuv8_to_uyvy8(void) {
 int Picture::pixel_pitch(void) {
     switch (pix_fmt) {
         case A8:
-            pixel_pitch = 1;
-            break;
+            return 1;
 
         case UYVY8:
-            pixel_pitch = 2;
-            break;
+            return 2;
 
         case RGB8:
         case YUV8:
-            pixel_pitch = 3;
-            break;
+            return 3;
 
         default:
             throw std::runtime_error("cannot deal with that pixel format");
@@ -291,13 +350,17 @@ int Picture::pixel_pitch(void) {
 }
 
 /* god awful slow blit routine */
-void Picture::draw(Picture *src, uint16_fast_t x, uint16_fast_t y,
-        uint8_fast_t r, uint8_fast_t g, uint8_fast_t b) {
+void Picture::draw(Picture *src, uint_fast16_t x, uint_fast16_t y,
+        uint_fast8_t r, uint_fast8_t g, uint_fast8_t b) {
     
-    int pixel_pitch;
-    uint16_fast_t blit_w, blit_h;
-    uint16_fast_t blit_y;
-    uint8_t *dst_start_ptr;
+    uint_fast16_t blit_w, blit_h;
+    uint_fast16_t blit_x, blit_y;
+    
+    uint_fast32_t ad, bd, cd;
+    uint_fast8_t as, bs, cs;
+    uint_fast8_t alpha;
+
+    uint8_t *dst_start_ptr, *src_start_ptr;
 
     Picture *src_conv;
 
@@ -306,6 +369,16 @@ void Picture::draw(Picture *src, uint16_fast_t x, uint16_fast_t y,
         return;
     } else if (src->pix_fmt == pix_fmt) {
         src_conv = src;
+    } else if (src->pix_fmt == BGRA8 && pix_fmt == RGB8) {
+        src_conv = src;
+    } else if (src->pix_fmt == YUVA8 && pix_fmt == YUV8) {
+        src_conv = src;
+    } else if (src->pix_fmt == YUVA8 && pix_fmt == RGB8) {
+        src_conv = src->convert_to_format(BGRA8);
+    } else if (src->pix_fmt == BGRA8 && pix_fmt == YUV8) {
+        src_conv = src->convert_to_format(YUVA8);
+    } else if (src->pix_fmt == BGRA8 || src->pix_fmt == YUVA8) {
+        throw std::runtime_error("unsupported pix fmt");
     } else {
         src_conv = src->convert_to_format(pix_fmt);
     }
@@ -326,31 +399,81 @@ void Picture::draw(Picture *src, uint16_fast_t x, uint16_fast_t y,
         blit_h = h - y;
     }
 
-    for (blit_y = 0; blit_y < blit_h; ++blit_y) {
-        dst_start_ptr = data + line_pitch * blit_y + pixel_pitch * x;
-        memcpy(dst_start_ptr, src->scanline(blit_y), pixel_pitch * blit_w);
+    if (src->pix_fmt != BGRA8 && src->pix_fmt != YUVA8) {
+        for (blit_y = 0; blit_y < blit_h; ++blit_y) {
+            dst_start_ptr = data + line_pitch * blit_y + pixel_pitch( ) * x;
+            memcpy(dst_start_ptr, src->scanline(blit_y), pixel_pitch( ) * blit_w);
+        }
+    } else if (src->pix_fmt == BGRA8 && pix_fmt == RGB8) {
+        for (blit_y = 0; blit_y < blit_h; ++blit_y) {
+            dst_start_ptr = scanline(y + blit_y) + pixel_pitch( ) * x;
+            src_start_ptr = src->scanline(blit_y);
+            for (blit_x = 0; blit_x < blit_w; ++blit_x) {
+                ad = dst_start_ptr[0];
+                bd = dst_start_ptr[1];
+                cd = dst_start_ptr[2];
+
+                cs = *src_start_ptr++;
+                bs = *src_start_ptr++;
+                as = *src_start_ptr++;
+                alpha = *src_start_ptr++;
+
+                ad = as * alpha + ad * (256 - alpha);
+                bd = bs * alpha + bd * (256 - alpha);
+                cd = cs * alpha + cd * (256 - alpha);
+
+                *dst_start_ptr++ = ad / 256;
+                *dst_start_ptr++ = bd / 256;
+                *dst_start_ptr++ = cd / 256;
+            }
+        }
+    } else if (src->pix_fmt == YUVA8 && pix_fmt == YUV8) {
+        for (blit_y = 0; blit_y < blit_h; ++blit_y) {
+            dst_start_ptr = scanline(y + blit_y) + pixel_pitch( ) * x;
+            src_start_ptr = src->scanline(blit_y);
+            for (blit_x = 0; blit_x < blit_w; ++blit_x) {
+                ad = dst_start_ptr[0];
+                bd = dst_start_ptr[1];
+                cd = dst_start_ptr[2];
+
+                as = *src_start_ptr++;
+                bs = *src_start_ptr++;
+                cs = *src_start_ptr++;
+                alpha = *src_start_ptr++;
+
+                ad = as * alpha + ad * (256 - alpha);
+                bd = bs * alpha + bd * (256 - alpha);
+                cd = cs * alpha + cd * (256 - alpha);
+
+                *dst_start_ptr++ = ad / 256;
+                *dst_start_ptr++ = bd / 256;
+                *dst_start_ptr++ = cd / 256;
+            }
+        }
+
+    } else {
+        throw std::runtime_error("can't handle that yet");
     }
 
 }
 
 
-void Picture::drawA8(Picture *src, uint16_fast_t x, uint16_fast_t y,
-        uint8_fast_t r, uint8_fast_t g, uint8_fast_t b) {
+void Picture::drawA8(Picture *src, uint_fast16_t x, uint_fast16_t y,
+        uint_fast8_t r, uint_fast8_t g, uint_fast8_t b) {
 
-    uint8_t blend_src[4];
+    uint_fast8_t blend_src[4];
     int blend_pitch;
-    uint16_t y, u, v;
-    uint16_fast_t blit_w, blit_h, blit_x, blit_y;
-    uint16_fast_t blend;
-    uint8_t *src_ptr;
+    uint_fast16_t y1, u, v;
+    uint_fast16_t blit_w, blit_h, blit_x, blit_y;
+    uint_fast16_t blend;
+    uint8_t *src_ptr, *my_ptr;
     uint8_t alpha;
     int j;
 
     /* use Y'CbCr format in 2 cases below */
-    y = 16 + (r * 66 + g * 129 + b * 25) / 256;
+    y1 = 16 + (r * 66 + g * 129 + b * 25) / 256;
     u = 128 + (b * 112 - g * 74 - r * 37) / 256;
     v = 128 + (r * 112 - g * 94 - b * 18) / 256;
-
     switch (pix_fmt) {
         case RGB8:
             blend_src[0] = r;
@@ -360,7 +483,7 @@ void Picture::drawA8(Picture *src, uint16_fast_t x, uint16_fast_t y,
             break;
 
         case YUV8:
-            blend_src[0] = y;
+            blend_src[0] = y1;
             blend_src[1] = u;
             blend_src[2] = v;
             blend_pitch = 3;
@@ -406,4 +529,91 @@ void Picture::drawA8(Picture *src, uint16_fast_t x, uint16_fast_t y,
     }
     
 }
+#ifdef HAVE_PANGOCAIRO
+
+cairo_surface_t *Picture::get_cairo(void) {
+    if (pix_fmt != BGRA8) {
+        throw std::runtime_error("cairo only supported with BGRA8 pictures");
+    }
+
+    return cairo_image_surface_create_for_data(data, CAIRO_FORMAT_ARGB32, w, h, line_pitch);
+}
+
+void Picture::render_text(uint_fast16_t x, uint_fast16_t y, 
+        const char *fmt, ...) {
+
+    va_list ap;
+    char *str;
+    int n;
+    cairo_surface_t *surf = get_cairo( );
+    cairo_t *cr = cairo_create(surf);
+    PangoLayout *layout = pango_cairo_create_layout(cr);
+
+    pango_layout_set_font_description(layout, font_description);
+    
+    va_start(ap, fmt);
+    n = vasprintf(&str, fmt, ap);
+    va_end(ap);
+
+    if (n < 0) {
+        throw std::runtime_error("vasprintf failed");
+    }
+
+    pango_layout_set_text(layout, str, -1);
+    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+    cairo_move_to(cr, x, y);
+    pango_cairo_show_layout(cr, layout);
+
+    g_object_unref(layout);
+    /* ditch cairo stuff */
+    cairo_destroy(cr);
+    cairo_surface_destroy(surf);
+}
+
+void Picture::set_font(const char *family, int height) {
+    if (font_description == NULL) {
+        font_description = pango_font_description_new( );
+    }
+
+    pango_font_description_set_family(font_description, family);
+    pango_font_description_set_weight(font_description, PANGO_WEIGHT_BOLD);
+    pango_font_description_set_absolute_size(font_description, height * PANGO_SCALE);
+
+}
+
+Picture *Picture::from_png(const char *filename) {
+    cairo_surface_t *pngs = cairo_image_surface_create_from_png(filename);
+
+    if (cairo_surface_status(pngs) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(pngs);
+        throw std::runtime_error("Failed to load PNG to Cairo surface");
+    }
+
+    cairo_format_t nf = cairo_image_surface_get_format(pngs);
+
+    if (nf != CAIRO_FORMAT_ARGB32 && nf != CAIRO_FORMAT_RGB24) {
+        cairo_surface_destroy(pngs);
+        throw std::runtime_error("PNG uses unsupported pixel format");
+    } 
+
+    Picture *ret = Picture::alloc(
+        cairo_image_surface_get_width(pngs),
+        cairo_image_surface_get_height(pngs),
+        4*cairo_image_surface_get_width(pngs),
+        BGRA8
+    );
+        
+    int xcopy = 4*ret->w;
+    int stride = cairo_image_surface_get_stride(pngs);
+    uint8_t *data = (uint8_t *)cairo_image_surface_get_data(pngs);
+
+    /* copy data */
+    for (int ycopy = 0; ycopy < ret->h; ++ycopy) {
+        memcpy(ret->scanline(ycopy), data + stride * ycopy, xcopy);
+    }
+    
+    cairo_surface_destroy(pngs);
+    return ret;
+}
+#endif
 std::list<Picture *> Picture::free_list;
