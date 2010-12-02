@@ -12,6 +12,8 @@
 
 #include "mutex.h"
 #include "event_handler.h"
+#include "condition.h"
+#include "thread.h"
 
 #define EVT_OUTPUT_NEED_FRAME 0x80000001
 
@@ -24,7 +26,6 @@
 class OutputAdapter {
 public:
     virtual void SetNextFrame(Picture *in_frame) = 0;
-    virtual bool ReadyForNextFrame(void) = 0;
     virtual ~OutputAdapter( ) { }
 };
 
@@ -269,13 +270,15 @@ protected:
 };
 #endif
 
-class StdoutOutput : public OutputAdapter {
+class StdoutOutput : public OutputAdapter, public Thread {
 public:
-    StdoutOutput( ) {
+    StdoutOutput(EventHandler *evtq_) : evtq(evtq_) {
         data = (uint8_t *)malloc(2*720*480);
         if (!data) {
             throw std::runtime_error("allocation failure");
         }
+
+        start( );
     }
 
     ~StdoutOutput( ) {
@@ -289,22 +292,51 @@ public:
     void SetNextFrame(Picture *in_frame) {
         int i;
 
+        Picture *convert;
+        if (in_frame->pix_fmt == UYVY8) {
+            convert = in_frame;
+        } else {
+            convert = in_frame->convert_to_format(UYVY8);
+        }
+
         int blit_max_w = (in_frame->w < 720) ? in_frame->w : 720;
         int blit_max_h = (in_frame->h < 480) ? in_frame->h : 480;
 
-        for (i = 0; i < blit_max_h; ++i) {
-            memcpy(data + 1440*i, in_frame->data + in_frame->line_pitch*i, 2*blit_max_w);
+        { MutexLock lock(mut);
+            for (i = 0; i < blit_max_h; ++i) {
+                memcpy(data + 1440*i, convert->scanline(i), 2*blit_max_w);
+            }
+            data_ready = true;
+            data_ready_cond.signal( );
         }
-        write(STDOUT_FILENO, data, 2*720*480);    
+
+        if (convert != in_frame) {
+            Picture::free(convert);
+        }
     }
 
-    bool ReadyForNextFrame(void) {
-        return true;
-    }
 
 protected:
-    uint8_t *data;
+    void run(void) {
+        for (;;) {
+            evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
+            { MutexLock lock(mut);
+                if (!data_ready) {
+                    data_ready_cond.wait(mut);
+                }
+        
+                write(STDOUT_FILENO, data, 2*720*480);    
+                data_ready = false;
+            }
+            usleep(33667); /* crude NTSC approximation */
+        }
+    }
 
+    uint8_t *data;
+    Condition data_ready_cond;
+    Mutex mut;
+    bool data_ready;
+    EventHandler *evtq;
 };
 
 #endif
