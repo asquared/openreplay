@@ -984,8 +984,10 @@ int main(int argc, char *argv[])
             if (playout_status.valid) {
                 line_of_text(&x, &y, "PLAYOUT: %s", timecode_fmt(playout_status.timecode));
                 line_of_text(
-                    &x, &y, "PLAYOUT SOURCE: CAM %d (CLOCK %s)", 
-                    playout_status.active_source + 1, playout_status.clock_on? "ON" : "OFF"
+                    &x, &y, "PLAYOUT SOURCE: [CAM %d%s%s]", 
+                    playout_status.active_source + 1, 
+                    playout_status.clock_on? " CLOCK" : "",
+                    playout_status.dsk_on? " DSK" : ""
                 );
             } else {
                 line_of_text(&x, &y, "PLAYOUT SERVER NOT RUNNING??");

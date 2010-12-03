@@ -36,6 +36,7 @@ struct playout_status {
     int active_source;
     int valid;
     bool clock_on;
+    bool dsk_on;
 };
 
 #endif

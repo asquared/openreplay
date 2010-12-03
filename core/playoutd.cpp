@@ -366,6 +366,7 @@ int main(int argc, char *argv[]) {
         status.timecode = marks[0] + play_offset;
         status.active_source = playout_source;
         status.clock_on = overlay_clock;
+        status.dsk_on = dsk_replay_title.active;
 
         /* 
          * note this could block the process! 
