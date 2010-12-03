@@ -1235,6 +1235,10 @@ int main(int argc, char *argv[])
                             do_playout_cmd(PLAYOUT_CMD_CLOCK_TOGGLE);
                             break;
 
+                        case SDLK_k:
+                            do_playout_cmd(PLAYOUT_CMD_DSK_TOGGLE);
+                            break;
+
                         case SDLK_ESCAPE:
             			    flag = 1;
                             break;

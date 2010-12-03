@@ -19,6 +19,9 @@
 #define PLAYOUT_CMD_CLOCK_ON 0x08
 #define PLAYOUT_CMD_CLOCK_OFF 0x09
 #define PLAYOUT_CMD_CLOCK_TOGGLE 0x0a
+#define PLAYOUT_CMD_DSK_ON 0x0b
+#define PLAYOUT_CMD_DSK_OFF 0x0c
+#define PLAYOUT_CMD_DSK_TOGGLE 0x0d
 
 struct playout_command {
     int cmd;

@@ -21,6 +21,8 @@
 
 #include "thread.h"
 
+#include <vector>
+
 MmapBuffer *buffers[MAX_CHANNELS];
 int marks[MAX_CHANNELS];
 float play_offset;
@@ -35,6 +37,14 @@ bool step_backward = false;
 bool run_backward = false;
 float playout_speed;
 bool overlay_clock = false;
+
+struct DSK {
+    Picture *overlay;
+    int x, y;
+    bool active;
+};
+
+struct DSK dsk_replay_title;
 
 #define EVT_PLAYOUT_COMMAND_RECEIVED 0x00000001
 class CommandReceiver : public Thread {
@@ -165,12 +175,30 @@ void parse_command(struct playout_command *cmd) {
         case PLAYOUT_CMD_CLOCK_OFF:
             overlay_clock = false;
             break;
+
+        case PLAYOUT_CMD_DSK_TOGGLE:
+            dsk_replay_title.active = !dsk_replay_title.active;
+            break;
+
+        case PLAYOUT_CMD_DSK_ON:
+            dsk_replay_title.active = true;
+            break;
+
+        case PLAYOUT_CMD_DSK_OFF:
+            dsk_replay_title.active = false;
+            break;
+
     }
 
     fprintf(stderr, "source is now... %d\n", playout_source);
 }
 
+
 class Renderer {
+    protected:
+        typedef std::vector<struct DSK *> dsk_list_t;
+        dsk_list_t dsks;
+
     public:
         Renderer( ) {
             frame = (struct mjpeg_frame *) malloc(MAX_FRAME_SIZE);
@@ -182,6 +210,10 @@ class Renderer {
 
         ~Renderer( ) {
             free(frame);
+        }
+
+        void add_dsk(struct DSK *dsk) {
+            dsks.push_back(dsk);    
         }
 
         Picture *render_next_frame(void) {
@@ -224,15 +256,15 @@ class Renderer {
                     if (overlay_clock) {
                         clock_value = frame->clock;
                         clock_image = Picture::copy(clock_bg);
-                        clock_image->set_font("sans", 30);
+                        clock_image->set_font("Gotham FWN Narrow Bold", 35);
                         if (clock_value >= 600) {
                             clock_image->render_text(
-                                20, 0, "%d:%02d\n",
+                                20, 4, "%d:%02d\n",
                                 clock_value / 600, (clock_value / 10) % 60
                             );
                         } else {
                             clock_image->render_text(
-                                20, 0, ":%02d.%d\n",
+                                20, 4, ":%02d.%d\n",
                                 clock_value / 10, clock_value % 10
                             );
                         }
@@ -241,7 +273,16 @@ class Renderer {
 
                         Picture::free(clock_image);
                     }
-
+                    
+                    /* DSK rendering */
+                    dsk_list_t::iterator i;
+                    for (i = dsks.begin( ); i != dsks.end( ); i++) {
+                        struct DSK *dsk = *i;
+                        if (dsk->active) {
+                            decoded->draw(dsk->overlay, dsk->x, dsk->y, 0, 0, 0);
+                        }
+                    }
+                
                     return decoded;
                 } catch (std::runtime_error e) {
                     fprintf(stderr, "Cannot decode frame\n");
@@ -258,6 +299,7 @@ class Renderer {
         struct mjpeg_frame *frame;
         MJPEGDecoder mjpeg_decoder;
         Picture *clock_bg;
+
 };
 
 int main(int argc, char *argv[]) {
@@ -279,6 +321,13 @@ int main(int argc, char *argv[]) {
     out = new DecklinkOutput(&evtq, 0);
 
     Renderer r;
+
+    /* initialize "Instant Replay" lower 1/3 DSK */
+    dsk_replay_title.overlay = Picture::from_png("instantreplay_title.png");
+    dsk_replay_title.x = 0;
+    dsk_replay_title.y = 400;
+    dsk_replay_title.active = false;
+    r.add_dsk(&dsk_replay_title);
 
     // initialize buffers
     for (i = 0; i < argc - 1; ++i) {
