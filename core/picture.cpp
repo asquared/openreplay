@@ -62,9 +62,11 @@ Picture::~Picture( ) {
         ::free(data);
     }
 
+#ifdef HAVE_PANGOCAIRO
     if (font_description) {
         pango_font_description_free(font_description);
     }
+#endif
 }
 
 void Picture::free(Picture *pic) {
