@@ -62,8 +62,9 @@ public:
     // (I wish I was in Europe. This API would seem so much more elegant over there.)
     DecklinkOutput(EventHandler *new_evtq, int cardIndex = 0) 
         : deckLink(0), deckLinkOutput(0), deckLinkIterator(0),
-          displayMode(0), deckLinkConfig(0), frame_duration(1001), time_base(30000), 
-          frame_counter(0), sine_offset(0), evtq(new_evtq)
+          displayMode(0), deckLinkConfig(0), frame_duration(1001), 
+          time_base(30000), frame_counter(0), sine_offset(0), 
+          evtq(new_evtq), last_frame_displayed(NULL)
     {
         deckLinkIterator = CreateDeckLinkIteratorInstance( ); 
 	/* Connect to DeckLink card */
@@ -252,19 +253,31 @@ protected:
     std::list<IDeckLinkMutableVideoFrame *> free_frames;
     std::list<IDeckLinkMutableVideoFrame *> ready_frames;
 
+    IDeckLinkMutableVideoFrame *last_frame_displayed;
+
     EventHandler *evtq;
     Mutex _mut;
 
     void schedule_next_frame(void) {
+        IDeckLinkMutableVideoFrame *frame;
         if (ready_frames.empty( )) {
-            // do nothing - no frames available
-            fprintf(stderr, "Decklink: dropped frame");
+            if (last_frame_displayed == NULL) {
+                fprintf(stderr, "Decklink warning: no frame available\n");
+                return;
+            } else {
+                frame = last_frame_displayed;
+                fprintf(stderr, "Decklink warning: using a stale frame\n");
+            }
         } else {
-            IDeckLinkMutableVideoFrame *frame = ready_frames.front( );
+            frame = ready_frames.front( );
             ready_frames.pop_front( );
-            deckLinkOutput->ScheduleVideoFrame(frame, frame_counter * frame_duration, frame_duration, time_base);
-            frame_counter++;
         }
+        deckLinkOutput->ScheduleVideoFrame(
+            frame, frame_counter * frame_duration, 
+            frame_duration, time_base
+        );
+        frame_counter++;
+        last_frame_displayed = frame;
     }
 
 };
