@@ -67,7 +67,7 @@ int playout_pid = -1;
 struct playout_status playout_status;
 
 // Preview frames per frame
-#define PVW_FPF 3
+#define PVW_FPF 2
 
 
 enum _display_mode { PREVIEW, LIVE, PLAYOUT, SEEK_MARK, SEEK_START, LIVE_VECTOR, LIVE_WAVEFORM } display_mode;
