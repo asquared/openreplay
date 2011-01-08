@@ -70,7 +70,7 @@ struct playout_status playout_status;
 #define PVW_FPF 3
 
 
-enum _display_mode { PREVIEW, LIVE, SEEK_MARK, SEEK_START, LIVE_VECTOR, LIVE_WAVEFORM } display_mode;
+enum _display_mode { PREVIEW, LIVE, PLAYOUT, SEEK_MARK, SEEK_START, LIVE_VECTOR, LIVE_WAVEFORM } display_mode;
 
 enum analyze { PICTURE, VECTOR, WAVEFORM };
 
@@ -734,6 +734,10 @@ void display_mode_live(void) {
     display_mode = LIVE;
 }
 
+void display_mode_playout(void) {
+    display_mode = PLAYOUT;
+}
+
 int input;
 
 int consume_numeric_input(void) {
@@ -888,13 +892,26 @@ int main(int argc, char *argv[])
                 }
 
                 /* Draw frames as appropriate for the current mode. */
-                if (display_mode == LIVE) {
+                if (display_mode == LIVE || display_mode == PLAYOUT) {
+                    int d_timecode;
+
+                    if (display_mode == LIVE) {
+                        d_timecode = buffers[display_cam]->get_timecode( ) - 1;
+                    } else if (display_mode == PLAYOUT) {
+                        /* playout_status.timecode is relative to camera 1 */
+                        d_timecode = playout_status.timecode
+                            + marks[display_cam]
+                            - marks[0];
+                    }
+
                     draw_frame(buffers[display_cam], x, y, 
-                        buffers[display_cam]->get_timecode( ) - 1, PICTURE, &sbc); 
+                        d_timecode, PICTURE, &sbc); 
                     if (sbc > 60) {
-                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", 
+                            sbc / 600, (sbc / 10) % 60);
                     } else {
-                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", 
+                            (sbc / 10) % 60, sbc % 10);
                     }
                 } else if (display_mode == LIVE_VECTOR) {
                     draw_frame(buffers[display_cam], x, y, 
@@ -906,9 +923,11 @@ int main(int argc, char *argv[])
                     draw_frame(buffers[display_cam], x, y, 
                         replay_ptrs[display_cam], PICTURE, &sbc);
                     if (sbc > 60) {
-                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", 
+                            sbc / 600, (sbc / 10) % 60);
                     } else {
-                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", 
+                            (sbc / 10) % 60, sbc % 10);
                     }
                     replay_ptrs[display_cam] += PVW_FPF;
                     if (replay_ptrs[display_cam] >= replay_ends[display_cam]) {
@@ -1070,6 +1089,10 @@ int main(int argc, char *argv[])
                         case SDLK_HOME:
                         case SDLK_l:
                             display_mode_live( );
+                            break;
+
+                        case SDLK_DELETE:
+                            display_mode_playout( );
                             break;
 
                         case SDLK_q:
