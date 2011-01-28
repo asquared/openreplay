@@ -26,9 +26,21 @@ int count_args(char **args) {
 
 /* start FFmpeg in a child process. Audio and video fds come out. */
 pid_t start_ffmpeg(int argc, char **argv, int *audio_pipe, int *video_pipe) {
-    /* output args: "-f rawvideo -s 720x480 -pix_fmt uyvy422 pipe:xxx -f s16le -ar 48000 */
-    char *ff_video_args[] = { "-f", "rawvideo", "-s", "720x480", "-pix_fmt", "uyvy422", NULL };
-    char *ff_audio_args[] = { "-f", "s16le", "-ar", "48000", NULL };
+    char *ff_video_args[] = { 
+      /* decode to 720x480 raw UYVY422 format */
+      "-f", "rawvideo", 
+      "-s", "720x480", 
+      "-pix_fmt", "uyvy422", 
+      NULL 
+    };
+
+    char *ff_audio_args[] = { 
+      /* decode to 16-bit little-endian 48khz signed data */
+      "-f", "s16le", 
+      "-ar", "48000", 
+      NULL 
+    };
+
     char *vpipe_arg = 0, *apipe_arg = 0;
     char **args;
     char **argp;
@@ -230,7 +242,7 @@ int main(int argc, char **argv) {
 
     signal(SIGCHLD, SIG_IGN);
 
-    out = new DecklinkOutput(0);
+    out = new DecklinkOutput(NULL, 0);
 
     ffmpeg_pid = start_ffmpeg(argc - 1, argv + 1, &apipe, &vpipe);
     aplay_pid = start_aplay(&aout_pipe);
@@ -244,17 +256,20 @@ int main(int argc, char **argv) {
     buffer_list[0] = &v_buffer;
     buffer_list[1] = &a_buffer;
 
+    uint32_t event;
+    void *argptr;
+
     /* while we've still got stuff to play back... */
     while (!v_buffer.stream_finished( ) || !a_buffer.stream_finished( )) {
         if (out->ReadyForNextFrame( )) {
             frame = v_buffer.get_next_block( );
             if (frame) {
                 memcpy(uyvy_frame->data, frame, VIDEO_FRAME_SIZE);
-
                 out->SetNextFrame(uyvy_frame);
                 v_buffer.done_with_block(frame);
             }
         }
+
         if (aout->ReadyForMoreAudio( )) {
             audio_block = a_buffer.get_next_block( );
             if (audio_block) {

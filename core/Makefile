@@ -47,7 +47,8 @@ clockd: clockd.cpp mmap_state.cpp
 field_split: field_split.cpp 
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
-ffoutput: ffoutput.cpp picture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
+ffoutput: ffoutput.cpp picture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp \
+		thread.cpp mutex.cpp condition.cpp event_handler.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
 libjpeg_test: libjpeg_test.cpp mjpeg_frame.cpp picture.cpp

@@ -26,6 +26,7 @@
 class OutputAdapter {
 public:
     virtual void SetNextFrame(Picture *in_frame) = 0;
+    virtual bool ReadyForNextFrame( ) = 0;
     virtual ~OutputAdapter( ) { }
 };
 
@@ -125,8 +126,13 @@ public:
         }
 
         // ask client for its first frame
-        evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
+        if (evtq) {
+            evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
+        }
+    }
 
+    bool ReadyForNextFrame( ) {
+        return current_frame_is_stale; 
     }
 
     void SetNextFrame(Picture *in_frame) {
@@ -244,7 +250,9 @@ protected:
                 current_frame_is_stale = true;
                 if (!was_stale) {
                     // we have just made the frame stale so let's ask for a new one
-                    evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
+                    if (evtq) {
+                        evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
+                    }
                 }
             }
         }
@@ -337,11 +345,22 @@ public:
         }
     }
 
+    bool ReadyForNextFrame( ) {
+        bool ready;
+        { MutexLock lock(mut);
+            ready = !data_ready;
+        }
+
+        return ready;
+    }
+
 
 protected:
     void run(void) {
         for (;;) {
-            evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
+            if (evtq) {
+                evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
+            }
             { MutexLock lock(mut);
                 if (!data_ready) {
                     data_ready_cond.wait(mut);
