@@ -1,8 +1,11 @@
 # This makefile is inefficient.
 
+-include local.mk
+
 CC=g++
-SDK_PATH=/home/armena/opt/bmd_sdk/Linux/include
-CFLAGS=-Wno-multichar -Wall -Wextra -I $(SDK_PATH) -fno-rtti -g -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -DENABLE_DECKLINK `pkg-config --cflags freetype2`
+SDK_PATH ?= /home/armena/opt/bmd_sdk/Linux/include
+CFLAGS += -Wno-multichar -Wall -Wextra -I $(SDK_PATH) -fno-rtti -g -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -DENABLE_DECKLINK `pkg-config --cflags freetype2`
+
 LDFLAGS=-lm -ldl -lpthread `pkg-config --libs freetype2`
 
 CFLAGS += -DHAVE_PANGOCAIRO
@@ -22,16 +25,20 @@ sdl_gui: sdl_gui.cpp mmap_buffer.cpp mjpeg_frame.cpp picture.cpp
 mjpeg_ingest: mjpeg_ingest.cpp mmap_buffer.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
-uyvy_ingest: uyvy_ingest.cpp mmap_buffer.cpp picture.cpp mjpeg_frame.cpp stats.cpp mmap_state.cpp
+uyvy_ingest: uyvy_ingest.cpp mmap_buffer.cpp picture.cpp \
+		mjpeg_frame.cpp stats.cpp mmap_state.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
-v4l2_ingest: v4l2_ingest.cpp mmap_buffer.cpp picture.cpp mjpeg_frame.cpp stats.cpp mmap_state.cpp
+v4l2_ingest: v4l2_ingest.cpp mmap_buffer.cpp picture.cpp \
+		mjpeg_frame.cpp stats.cpp mmap_state.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
 
-playoutd: playoutd.cpp mjpeg_frame.cpp picture.cpp mmap_buffer.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp thread.cpp mutex.cpp condition.cpp event_handler.cpp
+playoutd: playoutd.cpp mjpeg_frame.cpp picture.cpp mmap_buffer.cpp \
+		$(SDK_PATH)/DeckLinkAPIDispatch.cpp thread.cpp \
+		mutex.cpp condition.cpp event_handler.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 clockd: clockd.cpp mmap_state.cpp
@@ -50,4 +57,5 @@ time_libjpeg: time_libjpeg.cpp mjpeg_frame.cpp picture.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 clean:
-	rm -f sdl_gui mjpeg_ingest decklink_capture playoutd field_split ffoutput libjpeg_test time_libjpeg
+	rm -f sdl_gui mjpeg_ingest playoutd decklink_capture \
+	field_split ffoutput libjpeg_test time_libjpeg v4l2_ingest
