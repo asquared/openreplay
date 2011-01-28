@@ -17,15 +17,24 @@
 
 Picture::Picture( ) {
     data = NULL;
+    fprintf(stderr, "NEW PICTURE %p\n", this);
+    rcount = 1;
 #ifdef HAVE_PANGOCAIRO
     font_description = NULL;
 #endif
 }
 
+void Picture::addref( ) {
+    fprintf(stderr, "ADDREF %p\n", this);
+    __sync_add_and_fetch(&rcount, 1);
+}
+
 void Picture::alloc_data(size_t size) {
     if (data) {
+        fprintf(stderr, "FREE DATA %p\n", this);
         ::free(data);
     }
+    fprintf(stderr, "ALLOC DATA %p\n", this);
     data = (uint8_t *)memalign(ALIGN_ON, size);
     alloc_size = size;
 }
@@ -35,19 +44,13 @@ Picture *Picture::alloc(uint16_t w, uint16_t h, uint16_t line_pitch,
     Picture *candidate;
     size_t pic_size = h * line_pitch;
 
-    // See if we can get something off the free list.
-    if (!free_list.empty( )) {
-        candidate = free_list.front( );
-        free_list.pop_front( );
-    } else {
-        candidate = new Picture;
-    }
-
+    candidate = new Picture;
     candidate->w = w;
     candidate->h = h;
     candidate->line_pitch = line_pitch;
     candidate->pix_fmt = pix_fmt;
     candidate->alloc_data(pic_size);
+
     return candidate;
 }
 
@@ -59,6 +62,7 @@ Picture *Picture::copy(Picture *src) {
 
 Picture::~Picture( ) {
     if (data) {
+        fprintf(stderr, "FREE DATA %p\n", this);
         ::free(data);
     }
 
@@ -70,11 +74,17 @@ Picture::~Picture( ) {
 }
 
 void Picture::free(Picture *pic) {
-    if (free_list.size( ) >= FREELIST_MAX) {
-        delete pic;
-    } else {
-        free_list.push_back(pic);
+    int new_rcount;
+    fprintf(stderr, "DECREF %p\n", pic);
+    new_rcount = __sync_sub_and_fetch(&pic->rcount, 1);
+    assert(new_rcount >= 0);
+
+    if (new_rcount > 0) {
+        return; /* there are still references */
     }
+
+    fprintf(stderr, "FINALIZE %p\n", pic);
+    delete pic;
 }
 
 Picture *Picture::convert_to_format(enum pixel_format pix_fmt) {
@@ -618,4 +628,3 @@ Picture *Picture::from_png(const char *filename) {
     return ret;
 }
 #endif
-std::list<Picture *> Picture::free_list;

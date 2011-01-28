@@ -39,6 +39,8 @@ class Picture {
         void draw(Picture *src, uint_fast16_t x, uint_fast16_t y,
             uint_fast8_t r, uint_fast8_t g, uint_fast8_t b);
 
+        void addref( );
+
 #ifdef HAVE_PANGOCAIRO
         cairo_surface_t *get_cairo(void);
         void render_text(uint_fast16_t x, uint_fast16_t y, const char *fmt, ...);
@@ -46,6 +48,8 @@ class Picture {
         void set_font(const char *family, int height);
 #endif
     protected:
+        int rcount;
+
         Picture( );
         Picture *to_rgb8(void);
         Picture *to_uyvy8(void);
@@ -57,8 +61,6 @@ class Picture {
         Picture *yuv8_to_uyvy8(void);
         Picture *uyvy8_to_yuv8(void);
         Picture *bgra8_to_yuva8(void);
-
-        static std::list<Picture *> free_list;
 
         void alloc_data(size_t size);
 
