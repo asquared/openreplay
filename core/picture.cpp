@@ -10,6 +10,13 @@
 #define align_malloc malloc
 #define align_realloc realloc
 
+#ifdef REFCNT_DEBUG
+#define dfprintf fprintf
+#else
+#define dfprintf(...)
+#endif
+
+
 /* 16 works out nicely on scanline boundaries but we can go higher*/
 #define ALIGN_ON 64
 
@@ -17,7 +24,7 @@
 
 Picture::Picture( ) {
     data = NULL;
-    fprintf(stderr, "NEW PICTURE %p\n", this);
+    dfprintf(stderr, "NEW PICTURE %p\n", this);
     rcount = 1;
 #ifdef HAVE_PANGOCAIRO
     font_description = NULL;
@@ -25,16 +32,16 @@ Picture::Picture( ) {
 }
 
 void Picture::addref( ) {
-    fprintf(stderr, "ADDREF %p\n", this);
+    dfprintf(stderr, "ADDREF %p\n", this);
     __sync_add_and_fetch(&rcount, 1);
 }
 
 void Picture::alloc_data(size_t size) {
     if (data) {
-        fprintf(stderr, "FREE DATA %p\n", this);
+        dfprintf(stderr, "FREE DATA %p\n", this);
         ::free(data);
     }
-    fprintf(stderr, "ALLOC DATA %p\n", this);
+    dfprintf(stderr, "ALLOC DATA %p\n", this);
     data = (uint8_t *)memalign(ALIGN_ON, size);
     alloc_size = size;
 }
@@ -62,7 +69,7 @@ Picture *Picture::copy(Picture *src) {
 
 Picture::~Picture( ) {
     if (data) {
-        fprintf(stderr, "FREE DATA %p\n", this);
+        dfprintf(stderr, "FREE DATA %p\n", this);
         ::free(data);
     }
 
@@ -75,7 +82,7 @@ Picture::~Picture( ) {
 
 void Picture::free(Picture *pic) {
     int new_rcount;
-    fprintf(stderr, "DECREF %p\n", pic);
+    dfprintf(stderr, "DECREF %p\n", pic);
     new_rcount = __sync_sub_and_fetch(&pic->rcount, 1);
     assert(new_rcount >= 0);
 
@@ -83,7 +90,7 @@ void Picture::free(Picture *pic) {
         return; /* there are still references */
     }
 
-    fprintf(stderr, "FINALIZE %p\n", pic);
+    dfprintf(stderr, "FINALIZE %p\n", pic);
     delete pic;
 }
 
