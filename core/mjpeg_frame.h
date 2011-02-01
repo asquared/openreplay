@@ -13,6 +13,7 @@
 #include <stdexcept>
 
 struct mjpeg_frame {
+    uint32_t clock;
     bool interlaced;
     bool odd_dominant;
     size_t f1size;

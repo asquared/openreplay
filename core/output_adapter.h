@@ -10,6 +10,13 @@
 #include <stdexcept>
 #include <string.h>
 
+#include "mutex.h"
+#include "event_handler.h"
+#include "condition.h"
+#include "thread.h"
+
+#define EVT_OUTPUT_NEED_FRAME 0x80000001
+
 /* 
  * For now: input format to these things:
  * pixel data as Picture object pointer
@@ -19,7 +26,7 @@
 class OutputAdapter {
 public:
     virtual void SetNextFrame(Picture *in_frame) = 0;
-    virtual bool ReadyForNextFrame(void) = 0;
+    virtual bool ReadyForNextFrame( ) = 0;
     virtual ~OutputAdapter( ) { }
 };
 
@@ -54,11 +61,16 @@ public:
     // Magic framerate divisors for NTSC: timebase = 30000 ticks per second, frame duration = 1001 ticks
     // Magic framerate divisors for PAL 25FPS: timebase = 25 ticks per second, frame duration =  1 tick
     // (I wish I was in Europe. This API would seem so much more elegant over there.)
-    DecklinkOutput(int cardIndex = 0) 
+    DecklinkOutput(EventHandler *new_evtq, int cardIndex = 0) 
         : deckLink(0), deckLinkOutput(0), deckLinkIterator(0),
-          displayMode(0), deckLinkConfig(0), frame_duration(1001), time_base(30000), 
-          frame_counter(0), sine_offset(0)
+          displayMode(0), frame_duration(1001), 
+          time_base(30000), frame_counter(0),
+          evtq(new_evtq), current_frame(0),
+          current_frame_is_stale(true)
     {
+        HRESULT result;
+        const char *string;
+
         deckLinkIterator = CreateDeckLinkIteratorInstance( ); 
 	/* Connect to DeckLink card */
 	if (!deckLinkIterator) {
@@ -82,18 +94,6 @@ public:
             throw std::runtime_error("Failed to get IDeckLinkOutput interface"); 
         }
 
-	// Create frame object
-        for (int i = 0; i < DECKLINK_N_FIFO; i++) {
-            IDeckLinkMutableVideoFrame *frame;
-            if (
-                deckLinkOutput->CreateVideoFrame(
-                    720, 480, 1440, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame
-                ) != S_OK
-            ) {
-                    throw std::runtime_error("Failed to create frame");
-            }
-            ready_frames.push_back(frame);
-        }
 
         if (deckLinkOutput->SetScheduledFrameCompletionCallback(this) != S_OK) {
             throw std::runtime_error("Failed to set video frame completion callback!\n");
@@ -106,48 +106,64 @@ public:
         }
 
 
-        // Preroll a few black frames(??)
-        for (int i = 0; i < DECKLINK_N_FIFO; ++i) {
-            schedule_next_frame( );
+	// Create frame objects and preroll them
+        for (int i = 0; i < DECKLINK_N_FIFO; i++) {
+            IDeckLinkMutableVideoFrame *frame;
+            if (
+                deckLinkOutput->CreateVideoFrame(
+                    720, 480, 1440, bmdFormat8BitYUV, bmdFrameFlagDefault, &frame
+                ) != S_OK
+            ) {
+                    throw std::runtime_error("Failed to create frame");
+            }
+
+            schedule_next_frame(frame);
         }
 
+        // start the scheduled playback        
         if (deckLinkOutput->StartScheduledPlayback(0, 100, 1.0) != S_OK) {
             throw std::runtime_error("Failed to start scheduled playback!\n");
         }
 
+        // ask client for its first frame
+        if (evtq) {
+            evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
+        }
     }
 
+    bool ReadyForNextFrame( ) {
+        return current_frame_is_stale; 
+    }
 
     void SetNextFrame(Picture *in_frame) {
-        // INTERESTING QUESTION: Does modifying a frame that has been 
-        // scheduled have an effect on the output? The API documentation
-        // is bad enough, that I don't really know.
-        unsigned char *data_ptr;
-        int i;
+        Picture *new_frame, *old_frame;
 
-        if (free_frames.empty( )) {
-            throw std::runtime_error("Can't set next frame when no frames free!");
+        /* 
+         * Optimize me! This is a bad place to do this conversion. 
+         * A memcpy will be saved if we do it later 
+         * (directly into the Decklink buffer)
+         */
+        if (in_frame->pix_fmt == UYVY8) {
+            in_frame->addref( );
+            new_frame = in_frame;
+        } else {
+            new_frame = in_frame->convert_to_format(UYVY8);
         }
 
-        IDeckLinkMutableVideoFrame *frame = free_frames.front( );
-        free_frames.pop_front( );
-        frame->GetBytes((void **) &data_ptr);
-
-        int blit_max_w = (in_frame->w < 720) ? in_frame->w : 720;
-        int blit_max_h = (in_frame->h < 480) ? in_frame->h : 480;
-
-        for (i = 0; i < blit_max_h; ++i) {
-            memcpy(data_ptr + 1440*i, in_frame->data + in_frame->line_pitch*i, 2*blit_max_w);
+        /*
+         * swap current_frame and new_frame atomically.
+         * This minimizes the time a lock is held for.
+         */
+        { MutexLock lock(_mut);             
+            old_frame = current_frame;
+            current_frame = new_frame;
+            current_frame_is_stale = false;
         }
 
-        ready_frames.push_back(frame);
-
+        if (old_frame != NULL) {
+            Picture::free(old_frame);            
+        }
     }
-
-    bool ReadyForNextFrame(void) {
-        return !free_frames.empty( );
-    }
-
 
     ~DecklinkOutput(void) {
         if (deckLinkOutput != NULL) {
@@ -160,12 +176,6 @@ public:
             deckLink = NULL;
         }
 
-
-        if (deckLinkConfig != NULL) {
-            deckLinkConfig->Release( );
-            deckLinkConfig = NULL;
-        }
-
         if (deckLinkIterator != NULL) {
             deckLinkIterator->Release();
         }
@@ -176,7 +186,7 @@ public:
     virtual HRESULT ScheduledFrameCompleted(IDeckLinkVideoFrame *completed_frame, BMDOutputFrameCompletionResult result) {
         IDeckLinkMutableVideoFrame *frame
             = (IDeckLinkMutableVideoFrame *) completed_frame;
-        free_frames.push_back(frame);
+
         switch (result) {
             case bmdOutputFrameDisplayedLate:
                 fprintf(stderr, "WARNING: Decklink displayed frame late (running too slow!)\r\n");
@@ -191,7 +201,7 @@ public:
                 break;
         }
 
-        schedule_next_frame( );
+        schedule_next_frame(frame);
 
         return S_OK;
     }
@@ -213,43 +223,92 @@ protected:
     IDeckLinkOutput *deckLinkOutput;
     IDeckLinkIterator *deckLinkIterator;
     IDeckLinkDisplayMode *displayMode;
-    IDeckLinkConfiguration *deckLinkConfig;
-    IDeckLinkMutableVideoFrame *last_good_frame;
-    BMDTimeValue frame_start, time_now;
-
-    BMDTimeValue frame_duration;
     BMDTimeScale time_base;
+    BMDTimeValue frame_duration;
+
+    Picture *current_frame;
+    bool current_frame_is_stale;
+
     int frame_counter;
-    int sine_offset;
 
+    EventHandler *evtq;
+    Mutex _mut;
 
-    HRESULT result;
-    const char *string;
-
-    std::list<IDeckLinkMutableVideoFrame *> free_frames;
-    std::list<IDeckLinkMutableVideoFrame *> ready_frames;
-
-    void schedule_next_frame(void) {
-        if (ready_frames.empty( )) {
-            // do nothing - no frames available
-        } else {
-            IDeckLinkMutableVideoFrame *frame = ready_frames.front( );
-            ready_frames.pop_front( );
-            deckLinkOutput->ScheduleVideoFrame(frame, frame_counter * frame_duration, frame_duration, time_base);
-            frame_counter++;
+    void schedule_next_frame(IDeckLinkMutableVideoFrame *frame) {
+        void *void_data;
+        uint8_t *frame_data;
+        Picture *in_frame; 
+        bool was_stale;
+        
+        // make sure we get a consistent version of the state.
+        // No member access outside this block! (except DeckLink API calls)
+        { MutexLock lock(_mut);
+            was_stale = current_frame_is_stale; 
+            in_frame = current_frame;
+            if (in_frame != NULL) {
+                in_frame->addref( );
+                current_frame_is_stale = true;
+                if (!was_stale) {
+                    // we have just made the frame stale so let's ask for a new one
+                    if (evtq) {
+                        evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
+                    }
+                }
+            }
         }
+
+        if (was_stale) {
+            // gratuitous?
+            fprintf(stderr, "Decklink warning: using a stale frame\n");
+        }
+
+        frame->GetBytes(&void_data);
+        frame_data = (uint8_t *) void_data;
+
+        if (in_frame != NULL) {
+            int in_scanline_size = in_frame->line_pitch;
+            int out_scanline_size = 1440; /* size of a 720 pixel UYVY scanline */
+            int copy_size;
+
+            if (in_scanline_size < out_scanline_size) {
+                copy_size = in_scanline_size;
+            } else {
+                copy_size = out_scanline_size;
+            }
+
+            for (int j = 0; j < 480; j++) {
+                memcpy(frame_data, in_frame->scanline(j), copy_size);
+                frame_data += out_scanline_size;
+            }
+            
+            Picture::free(in_frame);
+        } else {
+            // black 
+            for (int i = 0; i < 720*480; i++, frame_data += 2) {
+                frame_data[0] = 128; // u, v
+                frame_data[1] = 16; // y
+            }
+        }
+
+        deckLinkOutput->ScheduleVideoFrame(
+            frame, frame_counter * frame_duration, 
+            frame_duration, time_base
+        );
+        frame_counter++;
     }
 
 };
 #endif
 
-class StdoutOutput : public OutputAdapter {
+class StdoutOutput : public OutputAdapter, public Thread {
 public:
-    StdoutOutput( ) {
+    StdoutOutput(EventHandler *evtq_) : evtq(evtq_) {
         data = (uint8_t *)malloc(2*720*480);
         if (!data) {
             throw std::runtime_error("allocation failure");
         }
+
+        start( );
     }
 
     ~StdoutOutput( ) {
@@ -263,22 +322,62 @@ public:
     void SetNextFrame(Picture *in_frame) {
         int i;
 
+        Picture *convert;
+        if (in_frame->pix_fmt == UYVY8) {
+            convert = in_frame;
+        } else {
+            convert = in_frame->convert_to_format(UYVY8);
+        }
+
         int blit_max_w = (in_frame->w < 720) ? in_frame->w : 720;
         int blit_max_h = (in_frame->h < 480) ? in_frame->h : 480;
 
-        for (i = 0; i < blit_max_h; ++i) {
-            memcpy(data + 1440*i, in_frame->data + in_frame->line_pitch*i, 2*blit_max_w);
+        { MutexLock lock(mut);
+            for (i = 0; i < blit_max_h; ++i) {
+                memcpy(data + 1440*i, convert->scanline(i), 2*blit_max_w);
+            }
+            data_ready = true;
+            data_ready_cond.signal( );
         }
-        write(STDOUT_FILENO, data, 2*720*480);    
+
+        if (convert != in_frame) {
+            Picture::free(convert);
+        }
     }
 
-    bool ReadyForNextFrame(void) {
-        return true;
+    bool ReadyForNextFrame( ) {
+        bool ready;
+        { MutexLock lock(mut);
+            ready = !data_ready;
+        }
+
+        return ready;
     }
+
 
 protected:
-    uint8_t *data;
+    void run(void) {
+        for (;;) {
+            if (evtq) {
+                evtq->post_event(EVT_OUTPUT_NEED_FRAME, NULL);
+            }
+            { MutexLock lock(mut);
+                if (!data_ready) {
+                    data_ready_cond.wait(mut);
+                }
+        
+                write(STDOUT_FILENO, data, 2*720*480);    
+                data_ready = false;
+            }
+            usleep(33667); /* crude NTSC approximation */
+        }
+    }
 
+    uint8_t *data;
+    Condition data_ready_cond;
+    Mutex mut;
+    bool data_ready;
+    EventHandler *evtq;
 };
 
 #endif

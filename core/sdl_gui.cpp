@@ -67,10 +67,10 @@ int playout_pid = -1;
 struct playout_status playout_status;
 
 // Preview frames per frame
-#define PVW_FPF 3
+#define PVW_FPF 2
 
 
-enum _display_mode { PREVIEW, LIVE, SEEK_MARK, SEEK_START, LIVE_VECTOR, LIVE_WAVEFORM } display_mode;
+enum _display_mode { PREVIEW, LIVE, PLAYOUT, SEEK_MARK, SEEK_START, LIVE_VECTOR, LIVE_WAVEFORM } display_mode;
 
 enum analyze { PICTURE, VECTOR, WAVEFORM };
 
@@ -207,7 +207,7 @@ void render_waveform(SDL_Surface *output, Picture *p) {
     }
 }
 
-void draw_frame(MmapBuffer *buf, int x, int y, int tc, enum analyze analyze) {
+void draw_frame(MmapBuffer *buf, int x, int y, int tc, enum analyze analyze, uint32_t *scoreboard_clock = 0) {
     SDL_Rect rect;
     Picture *decoded;
     uint8_t *pixels;
@@ -232,6 +232,9 @@ void draw_frame(MmapBuffer *buf, int x, int y, int tc, enum analyze analyze) {
         SDL_FillRect(frame_buf, 0, 0);
         SDL_BlitSurface(frame_buf, 0, screen, &rect);
     } else {
+        if (scoreboard_clock != NULL) {
+            *scoreboard_clock = frame->clock;
+        }
         try {
             if (analyze == PICTURE) {
                 decoded = mjpeg_decoder.decode_full(frame, RGB8);
@@ -731,6 +734,10 @@ void display_mode_live(void) {
     display_mode = LIVE;
 }
 
+void display_mode_playout(void) {
+    display_mode = PLAYOUT;
+}
+
 int input;
 
 int consume_numeric_input(void) {
@@ -775,11 +782,15 @@ void draw_tally(int x, int y, int r, int g, int b) {
 int main(int argc, char *argv[])
 {
         int x, y, j;
+        int xt, yt;
         // this kludge works if the video frame size isn't an even multiple
         // of the whole screen size... :-/
         int text_start_x;
         int flag = 0;
+        int display_cam;
         enum analyze analyze_mode = PICTURE;
+
+        uint32_t sbc; /* score board clock */
 
         input = 0;
         joyseek_enabled = false;
@@ -863,35 +874,86 @@ int main(int argc, char *argv[])
             x = TALLY_MARGIN;
             y = TALLY_MARGIN;
             text_start_x = 0;
-            for (j = 0; j < n_buffers; j++) {
+            for (j = 0; j < n_buffers && j < 4; j++) {
+                if (j == 0 && camera_get( ) >= 4) {
+                    display_cam = camera_get( );
+                } else {
+                    display_cam = j;
+                }
+
                 /* Draw tally indicators */
-                if (j == playout_status.active_source && playout_status.valid) {
+                if (display_cam == playout_status.active_source 
+                        && playout_status.valid) {
                     /* red "live" tally */
                     draw_tally(x, y, 255, 0, 0);
-                } else if (j == camera_get( )) {
+                } else if (display_cam == camera_get( )) {
                     /* green "preview" tally */
                     draw_tally(x, y, 0, 255, 0);
                 }
 
                 /* Draw frames as appropriate for the current mode. */
-                if (display_mode == LIVE) {
-                    draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1, PICTURE); 
+                if (display_mode == LIVE || display_mode == PLAYOUT) {
+                    int d_timecode;
+
+                    if (display_mode == LIVE) {
+                        d_timecode = buffers[display_cam]->get_timecode( ) - 1;
+                    } else if (display_mode == PLAYOUT) {
+                        /* playout_status.timecode is relative to camera 1 */
+                        d_timecode = playout_status.timecode
+                            + marks[display_cam]
+                            - marks[0];
+                    }
+
+                    draw_frame(buffers[display_cam], x, y, 
+                        d_timecode, PICTURE, &sbc); 
+                    if (sbc > 60) {
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", 
+                            sbc / 600, (sbc / 10) % 60);
+                    } else {
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", 
+                            (sbc / 10) % 60, sbc % 10);
+                    }
                 } else if (display_mode == LIVE_VECTOR) {
-                    draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1, VECTOR);
+                    draw_frame(buffers[display_cam], x, y, 
+                        buffers[display_cam]->get_timecode( ) - 1, VECTOR);
                 } else if (display_mode == LIVE_WAVEFORM) {
-                    draw_frame(buffers[j], x, y, buffers[j]->get_timecode( ) - 1, WAVEFORM);
+                    draw_frame(buffers[display_cam], x, y, 
+                        buffers[display_cam]->get_timecode( ) - 1, WAVEFORM);
                 } else if (display_mode == PREVIEW) {
-                    draw_frame(buffers[j], x, y, replay_ptrs[j], PICTURE);
-                    replay_ptrs[j] += PVW_FPF;
-                    if (replay_ptrs[j] >= replay_ends[j]) {
+                    draw_frame(buffers[display_cam], x, y, 
+                        replay_ptrs[display_cam], PICTURE, &sbc);
+                    if (sbc > 60) {
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", 
+                            sbc / 600, (sbc / 10) % 60);
+                    } else {
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", 
+                            (sbc / 10) % 60, sbc % 10);
+                    }
+                    replay_ptrs[display_cam] += PVW_FPF;
+                    if (replay_ptrs[display_cam] >= replay_ends[display_cam]) {
                         display_mode = LIVE;
                     }
                 } else if (display_mode == SEEK_MARK) {
-                    draw_frame(buffers[j], x, y, marks[j], PICTURE);
+                    draw_frame(buffers[display_cam], x, y, 
+                        marks[display_cam], PICTURE, &sbc);
+                    if (sbc > 60) {
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                    } else {
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                    }
                 } else if (display_mode == SEEK_START) {
-                    draw_frame(buffers[j], x, y, marks[j] - preroll, PICTURE);
+                    draw_frame(buffers[display_cam], x, y, 
+                        marks[display_cam] - preroll, PICTURE, &sbc);
+                    if (sbc > 60) {
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                    } else {
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                    }
                 }
 
+                xt = x;
+                yt = y;
+                line_of_text(&xt, &yt, "CAM %d", display_cam + 1);
 
                 x += frame_buf->w + 2*TALLY_MARGIN;
                 if (x + frame_buf->w > screen->w) {
@@ -940,7 +1002,12 @@ int main(int argc, char *argv[])
                 
             if (playout_status.valid) {
                 line_of_text(&x, &y, "PLAYOUT: %s", timecode_fmt(playout_status.timecode));
-                line_of_text(&x, &y, "PLAYOUT SOURCE: CAM %d", playout_status.active_source);
+                line_of_text(
+                    &x, &y, "PLAYOUT SOURCE: [CAM %d%s%s]", 
+                    playout_status.active_source + 1, 
+                    playout_status.clock_on? " CLOCK" : "",
+                    playout_status.dsk_on? " DSK" : ""
+                );
             } else {
                 line_of_text(&x, &y, "PLAYOUT SERVER NOT RUNNING??");
                 line_of_text(&x, &y, "STATUS UNKNOWN");
@@ -1024,6 +1091,10 @@ int main(int argc, char *argv[])
                             display_mode_live( );
                             break;
 
+                        case SDLK_DELETE:
+                            display_mode_playout( );
+                            break;
+
                         case SDLK_q:
                             preroll_up(5);
                             break;
@@ -1103,7 +1174,7 @@ int main(int argc, char *argv[])
 
                         case SDLK_END:
                             /* by default, return from slow-mo on rewind */
-                            if (!(evt.key.keysym.mod & KMOD_CTRL)) {
+                            if (evt.key.keysym.mod & KMOD_CTRL) {
                                 playout_speed_set(10);   
                                 playout_speed_live_change( );
                             }
@@ -1184,9 +1255,17 @@ int main(int argc, char *argv[])
                         case SDLK_F12:
                             do_playout_cmd(PLAYOUT_CMD_RESUME);
                             break;
+                        
+                        case SDLK_b:
+                            do_playout_cmd(PLAYOUT_CMD_CLOCK_TOGGLE);
+                            break;
+
+                        case SDLK_k:
+                            do_playout_cmd(PLAYOUT_CMD_DSK_TOGGLE);
+                            break;
 
                         case SDLK_ESCAPE:
-			    flag = 1;
+            			    flag = 1;
                             break;
 
                         case SDLK_v: /* Vectorscope */

@@ -16,6 +16,12 @@
 #define PLAYOUT_CMD_RESUME 0x05
 #define PLAYOUT_CMD_STEP_FORWARD 0x06
 #define PLAYOUT_CMD_STEP_BACKWARD 0x07
+#define PLAYOUT_CMD_CLOCK_ON 0x08
+#define PLAYOUT_CMD_CLOCK_OFF 0x09
+#define PLAYOUT_CMD_CLOCK_TOGGLE 0x0a
+#define PLAYOUT_CMD_DSK_ON 0x0b
+#define PLAYOUT_CMD_DSK_OFF 0x0c
+#define PLAYOUT_CMD_DSK_TOGGLE 0x0d
 
 struct playout_command {
     int cmd;
@@ -29,6 +35,8 @@ struct playout_status {
     int timecode;
     int active_source;
     int valid;
+    bool clock_on;
+    bool dsk_on;
 };
 
 #endif

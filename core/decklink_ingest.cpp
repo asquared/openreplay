@@ -2,12 +2,21 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <string.h>
 
 #include "DeckLinkAPI.h"
 #include "Capture.h"
+
 #include "mmap_buffer.h"
+#include "mmap_state.h"
+#include "mjpeg_config.h"
+#include "mjpeg_frame.h"
+#include "stats.h"
 
 MmapBuffer *buffer;
+MmapState *clock_ipc;
+MJPEGEncoder enc;
+EncodeStats stats(29.97);
 
 #define FRAMES_PER_SEC 30
 
@@ -20,6 +29,7 @@ HRESULT DeckLinkCaptureDelegate::VideoInputFrameArrived(IDeckLinkVideoInputFrame
     int frameCount, frames, sec, min, hr;
     int size;
     void *data;
+    Picture *p;
 
     // Handle Video Frame
     if(videoFrame)
@@ -30,10 +40,24 @@ HRESULT DeckLinkCaptureDelegate::VideoInputFrameArrived(IDeckLinkVideoInputFrame
         }
         else
         {
-            // write frame to buffer
             size = videoFrame->GetRowBytes( ) * videoFrame->GetHeight( );
             videoFrame->GetBytes(&data);
-            write(STDOUT_FILENO, data, size);
+
+            // make a 720x480 frame
+            p = Picture::alloc(720, 480, 1440, UYVY8);
+            memcpy(p->data, ((uint8_t *) data) + 6*1440, 480*1440); 
+
+            // encode frame
+            mjpeg_frame *frm = enc.encode_full(p, true);
+            Picture::free(p);
+
+            clock_ipc->get(&frm->clock, sizeof(frm->clock));
+            frm->odd_dominant = true;
+            frm->interlaced = false;
+            buffer->put(frm, sizeof(struct mjpeg_frame) + frm->f1size);
+            
+            stats.output_bytes(frm->f1size);
+            stats.finish_frames(1);
         }
 
     }
@@ -64,12 +88,15 @@ int main(int argc, char *argv[])
     HRESULT result;
     const char *string;
 
-    if (argc < 2) {
-        fprintf(stderr, "usage: %s card_index\n", argv[0]);
+    if (argc < 3) {
+        fprintf(stderr, "usage: %s card_index buffer\n", argv[0]);
         return 1;
     }
 
     cardIndex = atoi(argv[1]);
+
+    buffer = new MmapBuffer(argv[2], MAX_FRAME_SIZE, true);
+    clock_ipc = new MmapState("clock_ipc");
 
     if (!deckLinkIterator)
     {
