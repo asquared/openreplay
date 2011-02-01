@@ -95,6 +95,22 @@ int main(int argc, char *argv[])
     if (deckLink->QueryInterface(IID_IDeckLinkInput, (void**)&deckLinkInput) != S_OK)
         goto bail;
 
+    if (deckLink->QueryInterface(IID_IDeckLinkConfiguration, (void**)&deckLinkConfig) != S_OK)
+        goto bail;
+
+    /* set composite in */
+    if (deckLinkConfig->SetInt(bmdDeckLinkConfigVideoInputConnection, 
+            bmdVideoConnectionComposite) != S_OK) {
+        fprintf(stderr, "failed to set composite input\n");
+        goto bail;
+    }
+
+    /* set 7.5 IRE setup level*/
+    if (deckLinkConfig->SetInt(bmdDeckLinkConfigAnalogVideoInputFlags,
+            bmdAnalogVideoFlagCompositeSetup75) != S_OK) {
+        fprintf(stderr, "failed to set analog input flags\n");
+        goto bail;
+    }
 
     delegate = new DeckLinkCaptureDelegate();
     deckLinkInput->SetCallback(delegate);
