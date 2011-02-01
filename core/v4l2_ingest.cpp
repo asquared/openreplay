@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <string.h>
+#include <assert.h>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -29,12 +30,31 @@
 #include <asm/types.h>
 #include <linux/videodev2.h>
 
-/* make an odd-dominant frame from an even-dominant frame and the next frame */
-/* this works by copying odd scanlines from the "next" frame f1 into the "current" frame f2. */
-void make_odd_dominant(uint8_t *f1, uint8_t *f2, int scanline_pitch, int height) {
+/* 
+ * Given two even-dominant frames, construct an odd-dominant frame.
+ * We start with a video stream that looks like:
+ * [ E O | E O ].
+ * We want to get to
+ * E [ O E ] O.
+ * So we should copy even scanlines from the "second" (in time) frame
+ * over even scanlines in the "first" in time frame.
+ * The "first" frame is our result.
+ *
+ * Note that this would transform
+ * [ O E | O' E' ]
+ * into
+ * [ O E' ]
+ * which is not a valid frame by any stretch of imagination.
+ */
+void make_odd_dominant(Picture *first, Picture *second)
+{
     int j;
-    for (j = 0; j < height; j += 2) {
-        memcpy(f1 + scanline_pitch * j, f2 + scanline_pitch * j, scanline_pitch);
+    
+    assert(first->line_pitch == second->line_pitch);
+    assert(first->h == second->h);
+
+    for (j = 0; j < first->h; j += 2) {
+        memcpy(first->scanline(j), second->scanline(j), first->line_pitch);
     }
 }
 
@@ -45,9 +65,18 @@ void usage(char *name) {
 struct v4l2_open_device {
     int fd;
     int n_buffers;
-    void **buffers; /* size should be essentially determined by pixel format */
-    int *buffer_lengths;
+    Picture **buffers;
 };
+
+void free_open_device(v4l2_open_device *dev) {
+    for (int i = 0; i < dev->n_buffers; i++) {
+        if (dev->buffers[i]) {
+            free(dev->buffers[i]);
+        }
+    }
+
+    free(dev);
+}
 
 v4l2_open_device *open_v4l2(int argc, char * const *argv) {
     int input = 0;
@@ -62,6 +91,7 @@ v4l2_open_device *open_v4l2(int argc, char * const *argv) {
     struct v4l2_buffer buffer;
 
     int i;
+    int n_buffers = 16;
 
     const struct option options[] = {
         {
@@ -155,11 +185,13 @@ v4l2_open_device *open_v4l2(int argc, char * const *argv) {
     }
 
     fprintf(stderr, "w=%d h=%d\n", fmt.fmt.pix.width, fmt.fmt.pix.height);
+    fprintf(stderr, "field=%d\n", fmt.fmt.pix.field);
 
-    /* set up mmap()-based I/O */
-    req_buf.count = 4;
+    /* set up streaming I/O */
+    memset(&req_buf, 0, sizeof(req_buf));
+    req_buf.count = 16;
     req_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    req_buf.memory = V4L2_MEMORY_MMAP;
+    req_buf.memory = V4L2_MEMORY_USERPTR;
 
     if (ioctl(fd, VIDIOC_REQBUFS, &req_buf) == -1) {
         perror("cannot set memory-mapped I/O");
@@ -167,70 +199,36 @@ v4l2_open_device *open_v4l2(int argc, char * const *argv) {
         return NULL;
     }
 
-    if (req_buf.count < 4) {
-        fprintf(stderr, "couldn't allocate at least 4 capture buffers...\n");
-        close(fd);
-        return NULL;
-    }
-
     ret = (struct v4l2_open_device *) malloc(sizeof(struct v4l2_open_device));
     ret->fd = fd;
-    ret->n_buffers = req_buf.count;
-    ret->buffers = (void **)malloc(req_buf.count * sizeof(void *));
-    ret->buffer_lengths = (int *)malloc(req_buf.count * sizeof(int));
+    ret->n_buffers = n_buffers;
+    ret->buffers = (Picture **)malloc(n_buffers * sizeof(Picture *));
+    memset(ret->buffers, 0, n_buffers * sizeof(Picture *));
 
     for (i = 0; i < req_buf.count; ++i) {
+        // FIXME magic numbers
+        ret->buffers[i] = Picture::alloc(720, 480, 1440, UYVY8);
+
         memset(&buffer, 0, sizeof(buffer));
         buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buffer.memory = V4L2_MEMORY_MMAP;
+        buffer.memory = V4L2_MEMORY_USERPTR;
         buffer.index = i;
+        buffer.m.userptr = (unsigned long) ret->buffers[i]->data;
+        buffer.length = 2*720*480; // FIXME hack
 
-        if (ioctl(fd, VIDIOC_QUERYBUF, &buffer) == -1) {
-            perror("could not query buffer information");
+        if (ioctl(fd, VIDIOC_QBUF, &buffer) == -1) {
+            perror("queue v4l2 buffer");
             close(fd);
-            free(ret->buffers);
-            free(ret->buffer_lengths);
-            free(ret);
-            return NULL;
-        }
-
-        ret->buffer_lengths[i] = buffer.length;
-        ret->buffers[i] = mmap(NULL, buffer.length, PROT_READ | PROT_WRITE, 
-            MAP_SHARED, fd, buffer.m.offset);
-
-        if (ret->buffers[i] == MAP_FAILED) {
-            perror("mmap v4l2 buffer");
-            close(fd);
-            free(ret->buffers);
-            free(ret->buffer_lengths);
-            free(ret);
+            free_open_device(ret);
             return NULL;
         }
 
     }
     
-    /* queue the capture buffers and start the stream */
-    for (i = 0; i < ret->n_buffers; i++) {
-        buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buffer.memory = V4L2_MEMORY_MMAP;
-        buffer.index = i;
-
-        if (ioctl(fd, VIDIOC_QBUF, &buffer) == -1) {
-            perror("queue v4l2 buffer");
-            close(fd);
-            free(ret->buffers);
-            free(ret->buffer_lengths);
-            free(ret);
-            return NULL;
-        }
-    }
-
     if (ioctl(fd, VIDIOC_STREAMON, &buffer.type /* laziness */)) {
         perror("start capture stream");
         close(fd);
-        free(ret->buffers);
-        free(ret->buffer_lengths);
-        free(ret);
+        free_open_device(ret);
         return NULL;
     }
 
@@ -244,9 +242,8 @@ int main(int argc, char **argv) {
 
     struct v4l2_open_device *dev = open_v4l2(argc, argv);
     struct v4l2_buffer v4lbuf, v4l_lastbuf;
-    v4l_lastbuf.index = -1;
 
-    int last_buf = -1;
+    int current_buf;
 
     FILE *uyvy_test = fopen("test.uyvy", "w");
 
@@ -263,56 +260,59 @@ int main(int argc, char **argv) {
     /* DV = 720x480, capture card = 720x486 */
     int frame_w = 720, frame_h = 480;
 
-    Picture *input = Picture::alloc(frame_w, frame_h, 2*frame_w, UYVY8);
+    Picture *p_current;
+    Picture *p_last = NULL;
     
     for (;;) {
         /* wait for a frame */
         memset(&v4lbuf, 0, sizeof(v4lbuf));
         v4lbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        v4lbuf.memory = V4L2_MEMORY_MMAP;
+        v4lbuf.memory = V4L2_MEMORY_USERPTR;
 
         if (ioctl(dev->fd, VIDIOC_DQBUF, &v4lbuf) == -1) {
             perror("VIDIOC_DQBUF");
             return -1;
         }
-    
-        if (v4l_lastbuf.index == -1) {
-            memcpy(&v4l_lastbuf, &v4lbuf, sizeof(v4lbuf));
-        } else {
-            /* make an odd-dominant frame from 2 even-dominant frames */
-            make_odd_dominant(
-                (uint8_t *)dev->buffers[v4l_lastbuf.index], 
-                (uint8_t *)dev->buffers[v4lbuf.index], 
-                input->line_pitch, input->h
-            );
-            /* copy uyvy422 data */
-            memcpy(input->data, dev->buffers[v4l_lastbuf.index], input->line_pitch * input->h);
-            
+
+        for (current_buf = 0; 
+            current_buf < dev->n_buffers; 
+            ++current_buf
+        ) {            
+            if (
+                v4lbuf.m.userptr 
+                == (unsigned long)dev->buffers[current_buf]->data
+            ) {
+                break;
+            }
+        }
+
+        assert(current_buf < dev->n_buffers);
+        p_current = dev->buffers[current_buf];
+
+        if (p_last != NULL) {
+            make_odd_dominant(p_last, p_current);
+            // encode and store the data
+            mjpeg_frame *frm = enc.encode_full(p_last, true);
+
+            // (get scoreboard clock info)
+            clock_ipc.get(&frm->clock, sizeof(frm->clock));
+
+            frm->odd_dominant = true;
+            frm->interlaced = false;
+
+            buf.put(frm, sizeof(struct mjpeg_frame) + frm->f1size);
+            stats.output_bytes(frm->f1size);
+            stats.finish_frames(1);
+
             /* pass buffer back to v4l2 driver */
             if (ioctl(dev->fd, VIDIOC_QBUF, &v4l_lastbuf) == -1) {
                 perror("VIDIOC_QBUF");
                 return -1;
             }
-
-            memcpy(&v4l_lastbuf, &v4lbuf, sizeof(v4lbuf));
         }
 
-        //fwrite(dev->buffers[v4lbuf.index], 2*frame_w*frame_h, 1, stdout);
-
-
-        // encode and store the data
-        mjpeg_frame *frm = enc.encode_full(input, true);
-
-        // (get scoreboard clock info)
-        clock_ipc.get(&frm->clock, sizeof(frm->clock));
-
-        frm->odd_dominant = true;
-        frm->interlaced = false;
-        buf.put(frm, sizeof(struct mjpeg_frame) + frm->f1size);
-        stats.output_bytes(frm->f1size);
-        stats.finish_frames(1);
-
-
+        p_last = p_current;
+        memcpy(&v4l_lastbuf, &v4lbuf, sizeof(v4lbuf));
     }
 
     fclose(uyvy_test);
