@@ -17,7 +17,9 @@ LDFLAGS += `pkg-config --libs cairo`
 LDFLAGS += `pkg-config --libs pango`
 LDFLAGS += `pkg-config --libs pangocairo`
 
-all: sdl_gui mjpeg_ingest playoutd decklink_capture field_split ffoutput libjpeg_test time_libjpeg v4l2_ingest
+all: sdl_gui mjpeg_ingest playoutd decklink_capture field_split ffoutput \
+		libjpeg_test time_libjpeg v4l2_ingest \
+		decklink_ingest
 
 sdl_gui: sdl_gui.cpp mmap_buffer.cpp mjpeg_frame.cpp picture.cpp
 	$(CC) $(CFLAGS) `sdl-config --cflags` -o $@ $^ $(LDFLAGS) `sdl-config --libs` -lSDL_image -ljpeg
@@ -35,6 +37,11 @@ v4l2_ingest: v4l2_ingest.cpp mmap_buffer.cpp picture.cpp \
 
 decklink_capture: decklink_capture.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp
 	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+decklink_ingest: decklink_ingest.cpp $(SDK_PATH)/DeckLinkAPIDispatch.cpp \
+		mmap_buffer.cpp picture.cpp mjpeg_frame.cpp \
+		stats.cpp mmap_state.cpp
+	$(CC) -o $@ $^ $(CFLAGS) $(LDFLAGS) -ljpeg
 
 playoutd: playoutd.cpp mjpeg_frame.cpp picture.cpp mmap_buffer.cpp \
 		$(SDK_PATH)/DeckLinkAPIDispatch.cpp thread.cpp \
@@ -59,4 +66,5 @@ time_libjpeg: time_libjpeg.cpp mjpeg_frame.cpp picture.cpp
 
 clean:
 	rm -f sdl_gui mjpeg_ingest playoutd decklink_capture \
-	field_split ffoutput libjpeg_test time_libjpeg v4l2_ingest
+	field_split ffoutput libjpeg_test time_libjpeg v4l2_ingest \
+	decklink_ingest
