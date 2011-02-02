@@ -17,11 +17,6 @@
 #endif
 
 
-/* 16 works out nicely on scanline boundaries but we can go higher*/
-#define ALIGN_ON 4096
-
-#define FREELIST_MAX 16
-
 Picture::Picture( ) {
     data = NULL;
     dfprintf(stderr, "NEW PICTURE %p\n", this);
@@ -37,12 +32,20 @@ void Picture::addref( ) {
 }
 
 void Picture::alloc_data(size_t size) {
+    size_t pagesize;
+
+    pagesize = (size_t) getpagesize( );
+
     if (data) {
         dfprintf(stderr, "FREE DATA %p\n", this);
         ::free(data);
     }
     dfprintf(stderr, "ALLOC DATA %p\n", this);
-    data = (uint8_t *)memalign(ALIGN_ON, size);
+    
+    // round up to nearest alignment boundary
+    size = (size + pagesize - 1) & ~(pagesize - 1);    
+
+    data = (uint8_t *)memalign(pagesize, size);
     alloc_size = size;
 }
 
