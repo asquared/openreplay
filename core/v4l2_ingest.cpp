@@ -91,7 +91,7 @@ v4l2_open_device *open_v4l2(int argc, char * const *argv) {
     struct v4l2_buffer buffer;
 
     int i;
-    int n_buffers = 16;
+    int n_buffers = 32;
 
     const struct option options[] = {
         {
@@ -189,12 +189,12 @@ v4l2_open_device *open_v4l2(int argc, char * const *argv) {
 
     /* set up streaming I/O */
     memset(&req_buf, 0, sizeof(req_buf));
-    req_buf.count = 16;
+    req_buf.count = n_buffers;
     req_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req_buf.memory = V4L2_MEMORY_USERPTR;
 
     if (ioctl(fd, VIDIOC_REQBUFS, &req_buf) == -1) {
-        perror("cannot set memory-mapped I/O");
+        perror("cannot set up memory-mapped I/O");
         close(fd);
         return NULL;
     }
@@ -206,15 +206,17 @@ v4l2_open_device *open_v4l2(int argc, char * const *argv) {
     memset(ret->buffers, 0, n_buffers * sizeof(Picture *));
 
     for (i = 0; i < req_buf.count; ++i) {
-        // FIXME magic numbers
-        ret->buffers[i] = Picture::alloc(720, 480, 1440, UYVY8);
+        ret->buffers[i] = Picture::alloc(
+            fmt.fmt.pix.width, fmt.fmt.pix.height, 
+            2*fmt.fmt.pix.width, UYVY8
+        );
 
         memset(&buffer, 0, sizeof(buffer));
         buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         buffer.memory = V4L2_MEMORY_USERPTR;
         buffer.index = i;
         buffer.m.userptr = (unsigned long) ret->buffers[i]->data;
-        buffer.length = 2*720*480; // FIXME hack
+        buffer.length = ret->buffers[i]->line_pitch * ret->buffers[i]->h;
 
         if (ioctl(fd, VIDIOC_QBUF, &buffer) == -1) {
             perror("queue v4l2 buffer");
