@@ -18,7 +18,7 @@
 
 
 /* 16 works out nicely on scanline boundaries but we can go higher*/
-#define ALIGN_ON 64
+#define ALIGN_ON 4096
 
 #define FREELIST_MAX 16
 
