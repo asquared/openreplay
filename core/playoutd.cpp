@@ -44,7 +44,19 @@ struct DSK {
     bool active;
 };
 
-struct DSK dsk_replay_title;
+#define N_DSK_SLOTS 8
+struct DSK dsk_titles[N_DSK_SLOTS];
+
+const char *dsk_files[] = {
+    "instantreplay_title.png",
+    "reverseangle_title.png",
+    "supermotion_title.png",
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL
+};
 
 #define EVT_PLAYOUT_COMMAND_RECEIVED 0x00000001
 class CommandReceiver : public Thread {
@@ -177,15 +189,21 @@ void parse_command(struct playout_command *cmd) {
             break;
 
         case PLAYOUT_CMD_DSK_TOGGLE:
-            dsk_replay_title.active = !dsk_replay_title.active;
+            if (cmd->source < N_DSK_SLOTS) {
+                dsk_titles[cmd->source].active = !dsk_titles[cmd->source].active;
+            }
             break;
 
         case PLAYOUT_CMD_DSK_ON:
-            dsk_replay_title.active = true;
+            if (cmd->source < N_DSK_SLOTS) {
+                dsk_titles[cmd->source].active = true;
+            }
             break;
 
         case PLAYOUT_CMD_DSK_OFF:
-            dsk_replay_title.active = false;
+            if (cmd->source < N_DSK_SLOTS) {
+                dsk_titles[cmd->source].active = false;
+            }
             break;
 
     }
@@ -278,7 +296,7 @@ class Renderer {
                     dsk_list_t::iterator i;
                     for (i = dsks.begin( ); i != dsks.end( ); i++) {
                         struct DSK *dsk = *i;
-                        if (dsk->active) {
+                        if (dsk->active && dsk->overlay != NULL) {
                             decoded->draw(dsk->overlay, dsk->x, dsk->y, 0, 0, 0);
                         }
                     }
@@ -322,12 +340,18 @@ int main(int argc, char *argv[]) {
 
     Renderer r;
 
-    /* initialize "Instant Replay" lower 1/3 DSK */
-    dsk_replay_title.overlay = Picture::from_png("instantreplay_title.png");
-    dsk_replay_title.x = 0;
-    dsk_replay_title.y = 400;
-    dsk_replay_title.active = false;
-    r.add_dsk(&dsk_replay_title);
+    memset(dsk_titles, 0, sizeof(dsk_titles));
+
+    /* initialize lower 1/3 DSKs */
+    for (i = 0; i < N_DSK_SLOTS; i++) {
+        if (dsk_files[i] != NULL) {
+            dsk_titles[i].overlay = Picture::from_png(dsk_files[i]);
+            dsk_titles[i].x = 0;
+            dsk_titles[i].y = 400;
+            dsk_titles[i].active = false;
+            r.add_dsk(&dsk_titles[i]);
+        }
+    }
 
     // initialize buffers
     for (i = 0; i < argc - 1; ++i) {
@@ -366,7 +390,9 @@ int main(int argc, char *argv[]) {
         status.timecode = marks[0] + play_offset;
         status.active_source = playout_source;
         status.clock_on = overlay_clock;
-        status.dsk_on = dsk_replay_title.active;
+
+        // TODO: fix the DSK reporting
+        status.dsk_on = dsk_titles[0].active;
 
         /* 
          * note this could block the process! 
