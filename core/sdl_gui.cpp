@@ -577,6 +577,15 @@ void do_playout_cmd(int cmd_id) {
 }
 
 
+void toggle_dsk(int dsk_number) {
+    struct playout_command cmd;
+    cmd.cmd = PLAYOUT_CMD_DSK_TOGGLE;
+    cmd.source = dsk_number;
+
+    sendto(socket_fd, &cmd, sizeof(cmd), 0, (struct sockaddr *)&daemon_addr, sizeof(daemon_addr));
+}
+
+
 void socket_setup(void) {
     struct sockaddr_in bind_addr;
     bind_addr.sin_family = AF_INET;
@@ -1261,7 +1270,7 @@ int main(int argc, char *argv[])
                             break;
 
                         case SDLK_k:
-                            do_playout_cmd(PLAYOUT_CMD_DSK_TOGGLE);
+                            toggle_dsk(consume_numeric_input( ));
                             break;
 
                         case SDLK_ESCAPE:
