@@ -416,9 +416,9 @@ void write_file_from_mark(int n = -1) {
 
             /* free filename */
             free(fn);
-        
-            exit(0);
         }
+
+        exit(0);
     } else {
         /* parent process - just return and let child do its thing */
         /* maybe someday we'll check for signals */
