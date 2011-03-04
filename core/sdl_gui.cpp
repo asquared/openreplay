@@ -41,6 +41,7 @@ SDL_Surface *vscope_bg;
 MmapBuffer **buffers;
 int n_buffers;
 int clip_no = 0;
+int hypermotion_source;
 
 #define INST_PERIOD 1000
 int n_decoded, last_check;
@@ -50,6 +51,7 @@ struct mjpeg_frame *frame = NULL;
 MJPEGDecoder mjpeg_decoder;
 
 int *marks, *replay_ptrs, *replay_ends;
+int *hypermarks;
 std::vector<int *> saved_marks;
 
 #define MIN_SPEED -20
@@ -309,6 +311,13 @@ void mark_playout(void) {
     timecode_t displacement = playout_status.timecode - marks[0];
     for (j = 0; j < n_buffers; ++j) {
         marks[j] += displacement;
+    }
+}
+
+void hypermark(void) {
+    int j;
+    for (j = 0; j < n_buffers; ++j) {
+        hypermarks[j] = buffers[j]->get_timecode( );
     }
 }
 
@@ -572,6 +581,38 @@ void live_cut_and_rewind(int new_source) {
     }
 
     sendto(socket_fd, &cmd, sizeof(cmd), 0, (struct sockaddr *)&daemon_addr, sizeof(daemon_addr));
+}
+
+void live_cut_to_hypermark(void) {
+    /* 
+     * Is it just me or is it getting rather damp in here? 
+     * Anyway... this macro-kludge cues RPITV Hyper-Motion(tm).
+     * To do so we should set the speed back to 10 (since 5 is really slow).
+     * Also, we need to cut to the "hyper-motion" mark. This is marked by
+     * the hypermark( ) function, which marks the current frame (no preroll).
+     * Workflow: Hit `h` to mark the in-point of a hyper-motion clip.
+     * Hit `j` to roll it! 
+     */
+
+    int j;
+    struct playout_command cmd;
+    cmd.cmd = PLAYOUT_CMD_CUE_AND_GO;
+    cmd.source = hypermotion_source;
+    qreplay_speed = 10; /* really ugly hack */
+    cmd.new_speed = qreplay_speed/10.0f;
+
+    for (j = 0; j < n_buffers; ++j) {
+        cmd.marks[j] = hypermarks[j];
+    }
+
+    sendto(socket_fd, &cmd, sizeof(cmd), 0, (struct sockaddr *)&daemon_addr, sizeof(daemon_addr));
+    
+}
+
+void set_hypermotion_source(int source) {
+    if (source >= 0 && source < n_buffers) {
+        hypermotion_source = source;
+    }
 }
 
 void adjust_speed(float new_speed) {
@@ -847,6 +888,7 @@ int main(int argc, char *argv[])
         n_buffers = argc - 1;
         buffers = (MmapBuffer **)malloc(n_buffers * sizeof(MmapBuffer *));
         marks = (int *)malloc(n_buffers * sizeof(int *));
+        hypermarks = (int *)malloc(n_buffers * sizeof(int *));
         replay_ptrs = (int *)malloc(n_buffers * sizeof(int *));
         replay_ends = (int *)malloc(n_buffers * sizeof(int *));
 
@@ -858,6 +900,7 @@ int main(int argc, char *argv[])
     n_buffers = j - 1;
 
     mark( ); // initialize the mark
+    hypermark( ); // initialize hyper-motion mark
 
 	fprintf(stderr, "All buffers ready. Initializing SDL...");
 
@@ -1029,6 +1072,8 @@ int main(int argc, char *argv[])
                 line_of_text(&x, &y, " ");
             }
             line_of_text(&x, &y, "MARK: %s", timecode_fmt(marks[0]));
+            line_of_text(&x, &y, "HYPERMOTION MARK: %s", timecode_fmt(hypermarks[0]));
+            line_of_text(&x, &y, "HYPERMOTION SOURCE: CAM %d", hypermotion_source + 1);
             line_of_text(&x, &y, "PREROLL:  %s [+qw-, e]", timecode_fmt(preroll));
             line_of_text(&x, &y, "POSTROLL: %s [+as-, d]", timecode_fmt(postroll));
             line_of_text(&x, &y, "PLAYOUT SPEED: %d [+zx-, +/*-, c]", qreplay_speed);
@@ -1083,6 +1128,18 @@ int main(int argc, char *argv[])
 
                         case SDLK_m:
                             mark( );
+                            break;
+
+                        case SDLK_g:
+                            set_hypermotion_source(consume_numeric_input( ) - 1);
+                            break;
+
+                        case SDLK_h:
+                            hypermark( );
+                            break;
+
+                        case SDLK_j:
+                            live_cut_to_hypermark( );
                             break;
 
                         case SDLK_i:
