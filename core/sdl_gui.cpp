@@ -304,6 +304,14 @@ void mark(void) {
     }
 }
 
+void mark_playout(void) {
+    int j;
+    timecode_t displacement = playout_status.timecode - marks[0];
+    for (j = 0; j < n_buffers; ++j) {
+        marks[j] += displacement;
+    }
+}
+
 void save_mark(void) {
     int *saved_mark = new int[n_buffers];
 
@@ -1075,6 +1083,10 @@ int main(int argc, char *argv[])
 
                         case SDLK_m:
                             mark( );
+                            break;
+
+                        case SDLK_i:
+                            mark_playout( );
                             break;
 
                         case SDLK_KP_PLUS:
