@@ -27,7 +27,7 @@ int main( ) {
 
     memset(&listen_addr, 0, sizeof(listen_addr));
     listen_addr.sin_family = AF_INET;
-    listen_addr.sin_port = htons(30003);
+    listen_addr.sin_port = htons(30004);
     /* leave address set to zeroes (bind to all interfaces) */
 
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
