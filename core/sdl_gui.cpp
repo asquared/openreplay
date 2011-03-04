@@ -846,9 +846,10 @@ int main(int argc, char *argv[])
 	for (j = 1; j < argc; j ++) {
 	    buffers[j - 1] = new MmapBuffer(argv[j], MAX_FRAME_SIZE); 
 	}
-        n_buffers = j - 1;
 
-        mark( ); // initialize the mark
+    n_buffers = j - 1;
+
+    mark( ); // initialize the mark
 
 	fprintf(stderr, "All buffers ready. Initializing SDL...");
 
