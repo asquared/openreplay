@@ -70,7 +70,7 @@ struct playout_status playout_status;
 #define PVW_FPF 2
 
 
-enum _display_mode { PREVIEW, LIVE, PLAYOUT, SEEK_MARK, SEEK_START, LIVE_VECTOR, LIVE_WAVEFORM } display_mode;
+enum _display_mode { PREVIEW, LIVE, PLAYOUT, SEEK_START, LIVE_VECTOR, LIVE_WAVEFORM } display_mode;
 
 enum analyze { PICTURE, VECTOR, WAVEFORM };
 
@@ -300,7 +300,7 @@ void draw_frame(MmapBuffer *buf, int x, int y, int tc, enum analyze analyze, uin
 void mark(void) {
     int j;
     for (j = 0; j < n_buffers; ++j) {
-        marks[j] = buffers[j]->get_timecode( );
+        marks[j] = buffers[j]->get_timecode( ) - preroll;
     }
 }
 
@@ -389,7 +389,7 @@ void write_file_from_mark(int n = -1) {
             }
 
             /* for each frame */
-            for (j = mark_to_write[i] - preroll;
+            for (j = mark_to_write[i];
                    j < mark_to_write[i] + postroll; j++) {
                 /* get frame from buffer */
                 frame_size = MAX_FRAME_SIZE;
@@ -537,7 +537,7 @@ void cue_playout(void) {
     cmd.new_speed = qreplay_speed/10.0f;
 
     for (j = 0; j < n_buffers; ++j) {
-        cmd.marks[j] = marks[j] - preroll;
+        cmd.marks[j] = marks[j];
     }
 
     // ready to go... so do it.
@@ -725,14 +725,10 @@ void display_mode_seek_start(void) {
     display_mode = SEEK_START;
 }
 
-void display_mode_seek_mark(void) {
-    display_mode = SEEK_MARK;
-}
-
 void display_mode_preview(void) {
     int j;
     for (j = 0; j < n_buffers; ++j) {
-        replay_ptrs[j] = marks[j] - preroll;
+        replay_ptrs[j] = marks[j];
         replay_ends[j] = marks[j] + postroll;
     }
 
@@ -942,17 +938,9 @@ int main(int argc, char *argv[])
                     if (replay_ptrs[display_cam] >= replay_ends[display_cam]) {
                         display_mode = LIVE;
                     }
-                } else if (display_mode == SEEK_MARK) {
-                    draw_frame(buffers[display_cam], x, y, 
-                        marks[display_cam], PICTURE, &sbc);
-                    if (sbc > 60) {
-                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
-                    } else {
-                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
-                    }
                 } else if (display_mode == SEEK_START) {
                     draw_frame(buffers[display_cam], x, y, 
-                        marks[display_cam] - preroll, PICTURE, &sbc);
+                        marks[display_cam], PICTURE, &sbc);
                     if (sbc > 60) {
                         line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
                     } else {
@@ -1000,10 +988,7 @@ int main(int argc, char *argv[])
                 line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
             } else if (display_mode == PREVIEW) {
                 line_of_text(&x, &y, "REPLAY PREVIEW");
-                line_of_text(&x, &y, "%s", timecode_fmt(replay_ptrs[0] - (marks[0] - preroll)));
-            } else if (display_mode == SEEK_MARK) {
-                line_of_text(&x, &y, "MARKED FRAME");
-                line_of_text(&x, &y, "");
+                line_of_text(&x, &y, "%s", timecode_fmt(replay_ptrs[0] - marks[0]));
             } else if (display_mode == SEEK_START) {
                 line_of_text(&x, &y, "PLAYOUT START FRAME");
                 line_of_text(&x, &y, "");
@@ -1243,11 +1228,6 @@ int main(int argc, char *argv[])
                         case SDLK_F7:
                             display_mode_seek_start( );
                             break;
-
-                        case SDLK_F8:
-                            display_mode_seek_mark( );
-                            break;
-
 
                         case SDLK_F9:
                             do_playout_cmd(PLAYOUT_CMD_PAUSE);
