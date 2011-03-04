@@ -22,6 +22,7 @@
 #define PLAYOUT_CMD_DSK_ON 0x0b
 #define PLAYOUT_CMD_DSK_OFF 0x0c
 #define PLAYOUT_CMD_DSK_TOGGLE 0x0d
+#define PLAYOUT_CMD_CUE_AND_GO 0x0e
 
 struct playout_command {
     int cmd;

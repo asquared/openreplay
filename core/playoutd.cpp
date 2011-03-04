@@ -148,6 +148,15 @@ void parse_command(struct playout_command *cmd) {
             playout_source = cmd->source;
             break;
 
+        case PLAYOUT_CMD_CUE_AND_GO:
+            did_cut = true;
+            paused = false;
+            playout_speed = cmd->new_speed;
+            memcpy(marks, cmd->marks, sizeof(marks));
+            play_offset = 0.0f;
+            playout_source = cmd->source;
+            break;
+
         case PLAYOUT_CMD_ADJUST_SPEED:
             playout_speed = cmd->new_speed;
             break;

@@ -553,9 +553,15 @@ void live_cut(int new_source) {
 }
 
 void live_cut_and_rewind(int new_source) {
+    int j;
     struct playout_command cmd;
-    cmd.cmd = PLAYOUT_CMD_CUT_REWIND;
+    cmd.cmd = PLAYOUT_CMD_CUE_AND_GO;
     cmd.source = new_source;
+    cmd.new_speed = qreplay_speed/10.0f;
+
+    for (j = 0; j < n_buffers; ++j) {
+        cmd.marks[j] = marks[j];
+    }
 
     sendto(socket_fd, &cmd, sizeof(cmd), 0, (struct sockaddr *)&daemon_addr, sizeof(daemon_addr));
 }
