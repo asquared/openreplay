@@ -11,6 +11,9 @@
 #include <poll.h>
 #include <string.h>
 
+#include <getopt.h>
+#include <ctype.h>
+
 #include "mmap_buffer.h"
 #include "mjpeg_config.h"
 
@@ -25,6 +28,8 @@
 
 MmapBuffer *buffers[MAX_CHANNELS];
 int marks[MAX_CHANNELS];
+int auto_dsk_presets[MAX_CHANNELS];
+
 float play_offset;
 
 int status_socket_fd;
@@ -135,6 +140,22 @@ class StatusSocket {
         struct sockaddr_in addr;
 };
 
+void update_auto_dsk(int new_source) {
+    int dsk = auto_dsk_presets[new_source];
+    int j;
+
+    if (dsk != -1) {
+        /* turn on the auto DSK and turn off all others */
+        for (j = 0; j < N_DSK_SLOTS; j++) {
+            if (j == dsk) {
+                dsk_titles[j].active = true;
+            } else {
+                dsk_titles[j].active = false;
+            }
+        }
+    }
+}
+
 OutputAdapter *out;
 
 void parse_command(struct playout_command *cmd) {
@@ -146,6 +167,7 @@ void parse_command(struct playout_command *cmd) {
             memcpy(marks, cmd->marks, sizeof(marks));
             play_offset = 0.0f;
             playout_source = cmd->source;
+            update_auto_dsk(playout_source);
             break;
 
         case PLAYOUT_CMD_CUE_AND_GO:
@@ -155,6 +177,7 @@ void parse_command(struct playout_command *cmd) {
             memcpy(marks, cmd->marks, sizeof(marks));
             play_offset = 0.0f;
             playout_source = cmd->source;
+            update_auto_dsk(playout_source);
             break;
 
         case PLAYOUT_CMD_ADJUST_SPEED:
@@ -166,6 +189,7 @@ void parse_command(struct playout_command *cmd) {
             // fall through to the cut...
         case PLAYOUT_CMD_CUT:
             playout_source = cmd->source;
+            update_auto_dsk(playout_source);
             did_cut = true;
             break;
         
@@ -329,10 +353,87 @@ class Renderer {
 
 };
 
+void usage(char *name) {
+    fprintf(stderr, "usage: %s [options] buffers\n", name);
+    fprintf(stderr, "allowed options: \n");
+    fprintf(stderr, "-a, --auto-dsk <number>: assign automatic DSK\n");
+    fprintf(stderr, "    This option may be specified multiple times.\n");
+    fprintf(stderr, "    the first -a option applies to the first buffer\n");
+    fprintf(stderr, "    and so on and so forth\n");
+    fprintf(stderr, "-d, --dsk <filename>: specify DSK PNG files\n");
+    fprintf(stderr, "    This option may be specified multiple times:\n");
+    fprintf(stderr, "    DSKs will be numbered starting from zero.\n");
+}
+
 int main(int argc, char *argv[]) {
     struct playout_command cmd;
     struct playout_status status;
     int i;
+
+    const struct option options[] = {
+        {
+            name: "dsk",
+            has_arg: 1,
+            flag: NULL,
+            val: 'd'
+        },
+        {
+            name: "auto-dsk",
+            has_arg: 1,
+            flag: NULL,
+            val: 'a'
+        }
+    };
+
+    int opt;
+    int dsk_number = 0;
+    int auto_dsk_number = 0;
+
+    Renderer r;
+
+    memset(dsk_titles, 0, sizeof(dsk_titles));
+
+    /* start off with auto-DSK off for all cameras */
+    for (i = 0; i < MAX_CHANNELS; i++) {
+        auto_dsk_presets[i] = -1;
+    }
+    
+    /* parse options, load DSKs, set up auto-DSK */
+    while ((opt = getopt_long(argc, argv, "d:a:", options, NULL)) != EOF) {
+        switch (opt) {
+            case 'd':
+                /* load DSK */
+                if (dsk_number < N_DSK_SLOTS) {
+                    dsk_titles[dsk_number].overlay = Picture::from_png(optarg);
+                    dsk_titles[dsk_number].x = 0;
+                    dsk_titles[dsk_number].y = 400;
+                    dsk_titles[dsk_number].active = false;
+                    r.add_dsk(&dsk_titles[dsk_number]);
+                    dsk_number++;
+                } else {
+                    fprintf(stderr, "too many DSKs: can't load %s", optarg);
+                }
+                break;
+            case 'a':
+                if (auto_dsk_number < MAX_CHANNELS) {
+                    if (isdigit(optarg[0])) {
+                        auto_dsk_presets[auto_dsk_number] = atoi(optarg);
+                        auto_dsk_number++;
+                    } else {
+                        fprintf(stderr, "--auto-dsk argument must be numeric\n");
+                    }
+                } else {
+                    fprintf(stderr, "more auto-DSKs than allowed channels");
+                }
+                break;
+            default:
+                fprintf(stderr, "invalid argument\n");
+                usage(argv[0]);
+                exit(1);
+        }
+    }
+
+
 
     /* generate blank picture */
     Picture *blank = Picture::alloc(720, 480, 1440, UYVY8);
@@ -347,24 +448,10 @@ int main(int argc, char *argv[]) {
 
     out = new DecklinkOutput(&evtq, 0);
 
-    Renderer r;
-
-    memset(dsk_titles, 0, sizeof(dsk_titles));
-
-    /* initialize lower 1/3 DSKs */
-    for (i = 0; i < N_DSK_SLOTS; i++) {
-        if (dsk_files[i] != NULL) {
-            dsk_titles[i].overlay = Picture::from_png(dsk_files[i]);
-            dsk_titles[i].x = 0;
-            dsk_titles[i].y = 400;
-            dsk_titles[i].active = false;
-            r.add_dsk(&dsk_titles[i]);
-        }
-    }
 
     // initialize buffers
-    for (i = 0; i < argc - 1; ++i) {
-        buffers[i] = new MmapBuffer(argv[i + 1], MAX_FRAME_SIZE);
+    for (i = 0; optind < argc; ++i, ++optind) {
+        buffers[i] = new MmapBuffer(argv[optind], MAX_FRAME_SIZE);
     }
 
     // now, the interesting bits...
