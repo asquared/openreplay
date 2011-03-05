@@ -332,6 +332,18 @@ void save_mark(void) {
     log_message("saved mark: number %d", saved_marks.size( ) - 1);
 }
 
+void save_hypermark(void) {
+    int *saved_mark = new int[n_buffers];
+
+    // alignment safe??
+    memcpy(saved_mark, hypermarks, sizeof(int) * n_buffers);
+
+    saved_marks.push_back(saved_mark);
+
+    log_message("saved hypermotion: number %d", saved_marks.size( ) - 1);
+
+}
+
 void recall_mark(int n) {
     if (n < 0) {
         log_message("recall: (negative) mark number %d not found", n);
@@ -1142,6 +1154,7 @@ int main(int argc, char *argv[])
 
                         case SDLK_m:
                             mark( );
+                            save_mark( );
                             break;
 
                         case SDLK_g:
@@ -1150,6 +1163,7 @@ int main(int argc, char *argv[])
 
                         case SDLK_h:
                             hypermark( );
+                            save_hypermark( );
                             break;
 
                         case SDLK_j:
@@ -1162,6 +1176,7 @@ int main(int argc, char *argv[])
 
                         case SDLK_KP_PLUS:
                             mark( );
+                            save_mark( );
                             cue_playout( );
                             break;
 
