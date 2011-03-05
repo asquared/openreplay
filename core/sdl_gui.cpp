@@ -683,17 +683,12 @@ void update_playout_status(void) {
     }
 }
 
-void seek_mark_back(void) {
+void seek_mark_by(int n_frames) {
     for (int j = 0; j < n_buffers; ++j) {
-        marks[j] -= SEEK_STEP;
+        marks[j] += n_frames;
     }
 }
 
-void seek_mark_forward(void) {
-    for (int j = 0; j < n_buffers; ++j) {
-        marks[j] += SEEK_STEP;
-    }
-}
 
 void preroll_up(int amount) {
     preroll += amount;
@@ -820,7 +815,69 @@ void draw_tally(int x, int y, int r, int g, int b) {
     );
 }
 
+class Seeker {
+    public:
+        Seeker(float start_rate_, float max_rate_, float growth_rate_, int growth_frames_) 
+                : start_rate(start_rate_), max_rate(max_rate_),
+                  growth_rate(growth_rate_), growth_frames(growth_frames_), dir(0) { }
 
+        int update_and_get_offset( ) {
+            int ret;
+
+            if (dir == 0) {
+                return 0;
+            } else {
+                acc += rate;
+                
+                /* subtract out integer part and return it */
+                ret = floorf(acc);
+                acc -= ret;
+
+                frames++;
+                if (frames == growth_frames) {
+                    frames = 0;
+                    rate = rate * growth_rate;
+                    if (rate > max_rate) {
+                        rate = max_rate;
+                    }
+                }
+
+                return rate * dir;
+            }
+        }
+
+        void start_forward( ) {
+            if (dir == 0) {
+                rate = start_rate;
+                frames = 0;
+                dir = 1;
+                acc = 0;
+            }
+        }
+
+        void start_back( ) {
+            if (dir == 0) {
+                rate = start_rate;
+                frames = 0;
+                dir = 1;
+                acc = 0;
+            }
+        }
+
+        void stop( ) {
+            dir = 0;
+        }
+
+    private:
+        float start_rate;
+        float max_rate;
+        float growth_rate;
+        int growth_frames;
+        float rate;
+        int frames;
+        int dir;
+        float acc;
+};
 
 int main(int argc, char *argv[])
 {
@@ -840,6 +897,8 @@ int main(int argc, char *argv[])
         memset((void *)&playout_status, 0, sizeof(playout_status));
 
         SDL_Event evt;
+
+        Seeker mark_seeker(2.0f, 60.0f, 1.2f, 30);
 
         n_decoded = 0;
         last_check = time(NULL);
@@ -1058,7 +1117,14 @@ int main(int argc, char *argv[])
 
             // Event Processing
             if (SDL_PollEvent(&evt)) {
-               if (evt.type == SDL_KEYDOWN) {
+                if (evt.type == SDL_KEYUP) {
+                    switch (evt.key.keysym.sym) {
+                        case SDLK_F5:
+                        case SDLK_F6:
+                            mark_seeker.stop( );
+                            break;
+                    }
+                } else if (evt.type == SDL_KEYDOWN) {
                     switch (evt.key.keysym.sym) {
                         case SDLK_KP0:
                         case SDLK_KP1:
@@ -1242,11 +1308,11 @@ int main(int argc, char *argv[])
                             break;
 
                         case SDLK_F5:
-                            seek_mark_back( );
+                            mark_seeker.start_back( );
                             break;
 
                         case SDLK_F6:
-                            seek_mark_forward( );
+                            mark_seeker.start_forward( );
                             break;
 
                         case SDLK_F7:
