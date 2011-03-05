@@ -72,7 +72,7 @@ struct playout_status playout_status;
 #define PVW_FPF 2
 
 
-enum _display_mode { PREVIEW, LIVE, PLAYOUT, SEEK_START, LIVE_VECTOR, LIVE_WAVEFORM } display_mode;
+enum _display_mode { PREVIEW, LIVE, PLAYOUT, SEEK_START, SEEK_HYPER, LIVE_VECTOR, LIVE_WAVEFORM } display_mode;
 
 enum analyze { PICTURE, VECTOR, WAVEFORM };
 
@@ -701,6 +701,12 @@ void seek_mark_by(int n_frames) {
     }
 }
 
+void seek_hypermark_by(int n_frames) {
+    for (int j = 0; j < n_buffers; ++j) {
+        hypermarks[j] += n_frames;
+    }
+}
+
 
 void preroll_up(int amount) {
     preroll += amount;
@@ -785,6 +791,10 @@ int camera_get(void) {
 
 void display_mode_seek_start(void) {
     display_mode = SEEK_START;
+}
+
+void display_mode_seek_hypermotion(void) {
+    display_mode = SEEK_HYPER;
 }
 
 void display_mode_preview(void) {
@@ -911,6 +921,7 @@ int main(int argc, char *argv[])
         SDL_Event evt;
 
         Seeker mark_seeker(2.0f, 60.0f, 1.2f, 30);
+        Seeker hypermark_seeker(2.0f, 60.0f, 1.2f, 30);
 
         n_decoded = 0;
         last_check = time(NULL);
@@ -1049,6 +1060,14 @@ int main(int argc, char *argv[])
                     } else {
                         line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
                     }
+                } else if (display_mode == SEEK_HYPER) {
+                    draw_frame(buffers[display_cam], x, y, 
+                        hypermarks[display_cam], PICTURE, &sbc);
+                    if (sbc > 60) {
+                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                    } else {
+                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                    }
                 }
 
                 xt = x;
@@ -1134,6 +1153,11 @@ int main(int argc, char *argv[])
                         case SDLK_F5:
                         case SDLK_F6:
                             mark_seeker.stop( );
+                            break;
+
+                        case SDLK_COMMA:
+                        case SDLK_PERIOD:
+                            hypermark_seeker.stop( );
                             break;
                     }
                 } else if (evt.type == SDL_KEYDOWN) {
@@ -1330,8 +1354,21 @@ int main(int argc, char *argv[])
                             mark_seeker.start_forward( );
                             break;
 
+
+                        case SDLK_COMMA:
+                            hypermark_seeker.start_back( );
+                            break;
+
+                        case SDLK_PERIOD:
+                            hypermark_seeker.start_forward( );
+                            break;
+
                         case SDLK_F7:
                             display_mode_seek_start( );
+                            break;
+
+                        case SDLK_F8:
+                            display_mode_seek_hypermotion( );
                             break;
 
                         case SDLK_F9:
