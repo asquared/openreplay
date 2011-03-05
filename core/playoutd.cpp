@@ -473,6 +473,8 @@ int main(int argc, char *argv[]) {
                     }
 
                     last_decoded = current_decoded;
+                } else {
+                    fprintf(stderr, "Frame rendering failed!\n");
                 }
 
                 /* if the decode failed just show the last frame decoded instead */
