@@ -1,5 +1,4 @@
 #include "output_adapter.h"
-#include "pipe_buffer.h"
 
 #include <stdio.h>
 #include <unistd.h>
@@ -9,39 +8,40 @@
 
 #include <list>
 
-int count_args(char **args) {
-    int count = 0;
+char *ff_video_args[] = {
+  /* decode to 720x480 raw UYVY422 format */
+  "-f", "rawvideo", 
+  "-s", "720x480", /* FIXME magic resolution number */
+  "-pix_fmt", "uyvy422", 
+  NULL 
+};
 
-    while (*args) {
-        args++;
-        count++;
-    }
+char *ff_audio_args[] = { 
+  /* decode to 16-bit little-endian 48khz signed data */
+  "-f", "s16le", 
+  "-ar", "48000", /* FIXME magic number */
+  NULL 
+};
 
-    return count;
-}
+/*
+ * start_ffmpeg( )
+ * Start a FFmpeg child process which will decode audio or video.
+ * This process will send its output to a pipe.
+ *
+ * argc, argv: initial arguments to ffmpeg. These will be provided from
+ * the command line and used to configure the ffmpeg input.
+ *
+ * preset_args: more arguments to ffmpeg. These will be provided internally
+ * and determine the type and format of data to be sent via the pipe.
+ *
+ * pipe: A pointer to a variable that will receive the pipe descriptor.
+ *
+ * Return Value:
+ * Process ID of the FFmpeg process.
+ */
+pid_t start_ffmpeg(int argc, char **argv, char **preset_args, int *pipe) {
 
-#define VIDEO_LINE_SIZE 2*720
-#define VIDEO_FRAME_SIZE VIDEO_LINE_SIZE*480
-#define AUDIO_BLOCK_SIZE 4
-
-/* start FFmpeg in a child process. Audio and video fds come out. */
-pid_t start_ffmpeg(int argc, char **argv, int *audio_pipe, int *video_pipe) {
-    char *ff_video_args[] = { 
-      /* decode to 720x480 raw UYVY422 format */
-      "-f", "rawvideo", 
-      "-s", "720x480", 
-      "-pix_fmt", "uyvy422", 
-      NULL 
-    };
-
-    char *ff_audio_args[] = { 
-      /* decode to 16-bit little-endian 48khz signed data */
-      "-f", "s16le", 
-      "-ar", "48000", 
-      NULL 
-    };
-
-    char *vpipe_arg = 0, *apipe_arg = 0;
+    char *pipe_arg = 0;
     char **args;
     char **argp;
     pid_t child_pid;
@@ -49,22 +49,18 @@ pid_t start_ffmpeg(int argc, char **argv, int *audio_pipe, int *video_pipe) {
     int i;
 
     /* pipe[0] = read, pipe[1] = write */
-    int vpipe[2], apipe[2];
+    int opipe[2];
 
-    if (pipe(vpipe) < 0) {
-        perror("video pipe");
+    if (pipe(opipe) < 0) {
+        perror("ffmpeg pipe");
         throw std::runtime_error("pipe failed");
     }
 
-    if (pipe(apipe) < 0) {
-        perror("audio pipe");
-        throw std::runtime_error("pipe failed");
-    }
+    for (i = 0; preset_args[i]; ++i) { /* just count using i */ }
 
     args = new char *[
-        count_args(ff_video_args) + count_args(ff_audio_args)
-        + argc + 1 /* ffmpeg */ + 1 /* null terminator */
-        + 1 /* video pipe# */ + 1 /* audio pipe# */
+        i + argc + 1 /* ffmpeg */ + 1 /* null terminator */
+        + 1 /* pipe number */
     ];
 
     args[0] = "ffmpeg"; /* name of program to run */
@@ -76,26 +72,15 @@ pid_t start_ffmpeg(int argc, char **argv, int *audio_pipe, int *video_pipe) {
         argp++;
     }
 
-    /* copy ff_video_args */
-    for (i = 0; i < count_args(ff_video_args); ++i) {
-        *argp = ff_video_args[i];
+    /* copy preset output args */
+    for (i = 0; preset_args[i]; ++i) {
+        *argp = preset_args[i];
         argp++;
     }
 
-    /* set video pipe */
-    asprintf(&vpipe_arg, "pipe:%d", vpipe[1]);
-    *argp = vpipe_arg;
-    argp++;
-
-    /* copy ff_audio_args */
-    for (i = 0; i < count_args(ff_audio_args); ++i) {
-        *argp = ff_audio_args[i];
-        argp++;
-    }
-
-    /* set audio pipe */
-    asprintf(&apipe_arg, "pipe:%d", apipe[1]);
-    *argp = apipe_arg;
+    /* set output pipe */
+    asprintf(&pipe_arg, "pipe:%d", opipe[1]);
+    *argp = pipe_arg;
     argp++;
 
     /* terminate argument list */
@@ -108,32 +93,35 @@ pid_t start_ffmpeg(int argc, char **argv, int *audio_pipe, int *video_pipe) {
         throw std::runtime_error("Forking child process failed");
     } else if (child_pid == 0) {
         /* child process */
-        close(apipe[0]);
-        close(vpipe[0]);
+        close(opipe[0]);
         execvp("ffmpeg", args);
-        
+        free(pipe_arg);
+        delete [] args; 
         /* only reached if execvp fails */
         perror("execvp");
         exit(-1);
     } else {
         /* parent process */
-        close(apipe[1]);
-        close(vpipe[1]);
+        close(opipe[1]);
 
-        *audio_pipe = apipe[0];
-        *video_pipe = vpipe[0];
+        free(pipe_arg);
+        delete [] args;
+
+        *pipe = opipe[0];
         return child_pid;
     }
 }
 
-pid_t start_aplay(int *pipefd) {
+/*
+ * start_aplay
+ * Start the "aplay" program to play an audio stream.
+ *
+ * in_pipe_fd: pipe from which aplay should read audio data
+ *
+ * return value: process ID of the aplay process forked
+ */
+pid_t start_aplay(int in_pipefd) {
     pid_t child_pid;
-    int apipe[2];
-    
-    if (pipe(apipe) < 0) {
-        perror("aplay pipe");
-        throw std::runtime_error("pipe creation failed");
-    }
 
     child_pid = fork( );
     if (child_pid == -1) {
@@ -141,8 +129,7 @@ pid_t start_aplay(int *pipefd) {
         throw std::runtime_error("Forking aplay process failed");
     } else if (child_pid == 0) {
         /* exec aplay with the necessary options, and with the pipe as stdin */
-        close(apipe[1]);
-        dup2(apipe[0], STDIN_FILENO);
+        dup2(in_pipefd, STDIN_FILENO);
         execlp("aplay", "aplay",
             "--format=S16_LE",
             "--channels=2",
@@ -153,134 +140,97 @@ pid_t start_aplay(int *pipefd) {
         fprintf(stderr, "Failed to start aplay\n");
         exit(-1);
     } else {
-        *pipefd = apipe[1];
-        close(apipe[0]);
         return child_pid;
     }
 }
 
+/*
+ * alloc_picture
+ * Allocate a picture buffer of the correct size for one video frame.
+ *
+ * return value: a newly allocated picture of the correct size
+ */
+Picture *alloc_picture(void) {
+    return Picture::alloc(720, 480, 1440, UYVY8); /* FIXME magic numbers */
+}
 
-class PipeAudioOutput {
-    public:
-        PipeAudioOutput(int pipefd) {
-            fd = pipefd;
-            buf_size = 0;
-            data_buf = NULL;
+/*
+ * read_all
+ * Read all requested bytes from the FD. Work around read( )'s idiosyncrasies.
+ *
+ * fd: file descriptor to read from
+ * buf: pointer to location where data should be stored
+ * size: number of bytes to read
+ *
+ * return value: 
+ *      total number of bytes on success
+ *      0 on end of file
+ *      -1 on error
+ */
+ssize_t read_all(int fd, void *buf, size_t size) {
+    size_t n_done;
+    ssize_t result;
+    uint8_t bufp = (uint8_t *) buf;
 
+    while (n_done < size) {
+        result = read(fd, bufp + n_done, size - n_done);
+        if (result > 0) {
+            n_done += result;
+        } else if (result == 0) {
+            return 0;   
+        } else {
+            if (errno != EAGAIN && errno != EINTR) {
+                return -1;
+            } 
+            /* if it *is* one of those two we will try again */
         }
-        bool ReadyForMoreAudio( ) {
-            do_poll( );
-            if (buf_avail == 0) {
-                return true;
-            } else {
-                return false;
-            }
-        }
-        void SetNextAudio(short *samples, size_t len) {
-            if (buf_size < len) {
-                data_buf = (uint8_t *)realloc(data_buf, len);
-                if (!data_buf) {
-                    throw std::runtime_error("allocation failure");
-                }
+    }   
+    return size;
+}
 
-                buf_size = len;
-            }
-
-            buf_avail = len;
-            buf_ptr = 0;
-            memcpy(data_buf, samples, len);
-        }
-    protected:
-        int fd;
-
-        void do_poll( ) {
-            struct pollfd pfd;
-            pfd.fd = fd;
-            pfd.events = POLLOUT;
-            if (poll(&pfd, 1, 0) < 0) {
-                perror("poll");
-                throw std::runtime_error("poll failed");
-            }
-
-            if (pfd.revents & POLLOUT) {
-                do_write( );
-            }
-        }
-
-        void do_write( ) {
-            ssize_t n_written;
-            if (buf_avail > 0) {
-                n_written = write(fd, data_buf + buf_ptr, buf_avail);
-                if (n_written < 0) {
-                    perror("write");
-                    throw std::runtime_error("write failed");
-                } else {
-                    buf_ptr += n_written;
-                    buf_avail -= n_written;
-                }
-            }
-        }
-
-        uint8_t *data_buf;
-        size_t buf_size;
-        size_t buf_avail;
-        size_t buf_ptr;
-
-        bool ready;
-};
-
+/* Main entry point */
 int main(int argc, char **argv) {
-    pid_t ffmpeg_pid, aplay_pid;
-    int apipe, vpipe, aout_pipe;
+    pid_t ffmpeg_video_pid, ffmpeg_audio_pid, aplay_pid;
+    int apipe, vpipe;
 
     uint8_t *audio_block;
     uint8_t *frame;
 
+    uint32_t event;
+    void *argptr;
+
     /* These are the picture size values for NTSC UYVY8. For now, them's the breaks. */
-    Picture *uyvy_frame = Picture::alloc(720, 480, 1440, UYVY8);
+    Picture *uyvy_frame = alloc_picture( );
     OutputAdapter *out;
 
     signal(SIGCHLD, SIG_IGN);
 
-    out = new DecklinkOutput(NULL, 0);
 
-    ffmpeg_pid = start_ffmpeg(argc - 1, argv + 1, &apipe, &vpipe);
-    aplay_pid = start_aplay(&aout_pipe);
+    /* set up audio */
+    ffmpeg_audio_pid = start_ffmpeg(argc, argv, ff_audio_args, &apipe); 
+    aplay_pid = start_aplay(apipe);
 
-    PipeAudioOutput *aout = new PipeAudioOutput(aout_pipe);
+    /* set up video - audio will take care of itself from here */
+    ffmpeg_video_pid = start_ffmpeg(argc, argv, ff_video_args, &vpipe);
+    out = new DecklinkOutput(&evtq, 0);
 
-    PipeBuffer v_buffer(vpipe, VIDEO_FRAME_SIZE);
-    PipeBuffer a_buffer(apipe, AUDIO_BLOCK_SIZE);
-    PipeBuffer *buffer_list[2];
-
-    buffer_list[0] = &v_buffer;
-    buffer_list[1] = &a_buffer;
-
-    uint32_t event;
-    void *argptr;
-
-    /* while we've still got stuff to play back... */
-    while (!v_buffer.stream_finished( ) || !a_buffer.stream_finished( )) {
-        if (out->ReadyForNextFrame( )) {
-            frame = v_buffer.get_next_block( );
-            if (frame) {
-                memcpy(uyvy_frame->data, frame, VIDEO_FRAME_SIZE);
-                out->SetNextFrame(uyvy_frame);
-                v_buffer.done_with_block(frame);
-            }
+    for (;;) {
+        event = evtq.wait_event(argptr);
+        switch (event) {
+            case EVT_OUTPUT_NEED_FRAME:
+                if (read_all(vpipe, uyvy_frame->data, 
+                        uyvy_frame->line_pitch * uyvy_frame->h) == 0) {
+                    goto done;
+                } else {
+                    out->SetNextFrame(uyvy_frame);
+                    Picture::free(uyvy_frame);
+                    uyvy_frame = alloc_picture( );
+                }            
+                break;
         }
-
-        if (aout->ReadyForMoreAudio( )) {
-            audio_block = a_buffer.get_next_block( );
-            if (audio_block) {
-                aout->SetNextAudio((short *)audio_block, AUDIO_BLOCK_SIZE);
-                a_buffer.done_with_block(audio_block);
-            }
-        }
-
-        /* receive more data if we can */
-        PipeBuffer::update(buffer_list, 2);
     }
-
-    usleep(5000000); // wait until Decklink output finishes?
+    
+done:
+    delete out;
+    Picture::free(uyvy_frame);
 }
