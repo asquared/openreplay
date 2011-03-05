@@ -902,523 +902,523 @@ class Seeker {
 
 int main(int argc, char *argv[])
 {
-        int x, y, j;
-        int xt, yt;
-        // this kludge works if the video frame size isn't an even multiple
-        // of the whole screen size... :-/
-        int text_start_x;
-        int flag = 0;
-        int display_cam;
-        enum analyze analyze_mode = PICTURE;
+    int x, y, j;
+    int xt, yt;
+    // this kludge works if the video frame size isn't an even multiple
+    // of the whole screen size... :-/
+    int text_start_x;
+    int flag = 0;
+    int display_cam;
+    enum analyze analyze_mode = PICTURE;
 
-        uint32_t sbc; /* score board clock */
+    uint32_t sbc; /* score board clock */
 
-        input = 0;
+    input = 0;
 
-        memset((void *)&playout_status, 0, sizeof(playout_status));
+    memset((void *)&playout_status, 0, sizeof(playout_status));
 
-        SDL_Event evt;
+    SDL_Event evt;
 
-        Seeker mark_seeker(2.0f, 60.0f, 1.2f, 30);
-        Seeker hypermark_seeker(2.0f, 60.0f, 1.2f, 30);
+    Seeker mark_seeker(2.0f, 60.0f, 1.2f, 30);
+    Seeker hypermark_seeker(2.0f, 60.0f, 1.2f, 30);
 
-        n_decoded = 0;
-        last_check = time(NULL);
+    n_decoded = 0;
+    last_check = time(NULL);
 
-        socket_setup( );
+    socket_setup( );
 
-        signal(SIGCHLD, SIG_IGN); // we don't care about our children...
+    signal(SIGCHLD, SIG_IGN); // we don't care about our children...
 
-        font = IMG_Load("font.bmp");
+    font = IMG_Load("font.bmp");
 
-        if (!font) {
-            fprintf(stderr, "Failed to load font!");
-            return 1;
-        }
+    if (!font) {
+        fprintf(stderr, "Failed to load font!");
+        return 1;
+    }
 
-        vscope_bg = IMG_Load("vgraticule.bmp");
+    vscope_bg = IMG_Load("vgraticule.bmp");
 
-        if (!vscope_bg) {
-            fprintf(stderr, "Could not load vectorscope graticule image. Vectorscope not available\n");
-        }
+    if (!vscope_bg) {
+        fprintf(stderr, "Could not load vectorscope graticule image. Vectorscope not available\n");
+    }
 
-        if (argc < 2) {
-            fprintf(stderr, "usage: %s buffer_file ...\n", argv[0]);
-            return 1;
-        }
+    if (argc < 2) {
+        fprintf(stderr, "usage: %s buffer_file ...\n", argv[0]);
+        return 1;
+    }
 
-        n_buffers = argc - 1;
-        buffers = (MmapBuffer **)malloc(n_buffers * sizeof(MmapBuffer *));
-        marks = (int *)malloc(n_buffers * sizeof(int *));
-        hypermarks = (int *)malloc(n_buffers * sizeof(int *));
-        replay_ptrs = (int *)malloc(n_buffers * sizeof(int *));
-        replay_ends = (int *)malloc(n_buffers * sizeof(int *));
+    n_buffers = argc - 1;
+    buffers = (MmapBuffer **)malloc(n_buffers * sizeof(MmapBuffer *));
+    marks = (int *)malloc(n_buffers * sizeof(int *));
+    hypermarks = (int *)malloc(n_buffers * sizeof(int *));
+    replay_ptrs = (int *)malloc(n_buffers * sizeof(int *));
+    replay_ends = (int *)malloc(n_buffers * sizeof(int *));
 
-        // initialize buffers from command line args
-	for (j = 1; j < argc; j ++) {
-	    buffers[j - 1] = new MmapBuffer(argv[j], MAX_FRAME_SIZE); 
-	}
+    // initialize buffers from command line args
+    for (j = 1; j < argc; j ++) {
+        buffers[j - 1] = new MmapBuffer(argv[j], MAX_FRAME_SIZE); 
+    }
 
     n_buffers = j - 1;
 
     mark( ); // initialize the mark
     hypermark( ); // initialize hyper-motion mark
 
-	fprintf(stderr, "All buffers ready. Initializing SDL...");
+    fprintf(stderr, "All buffers ready. Initializing SDL...");
 
-	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_NOPARACHUTE) != 0) {
-            fprintf(stderr, "Failed to initialize SDL!\n");
-        }
-
-
-        screen = SDL_SetVideoMode(1920, 480*2, 24, SDL_HWSURFACE | SDL_DOUBLEBUF);
-        if (!screen) {
-            fprintf(stderr, "Failed to set video mode!\n");
-            goto dead;
-        }
-
-        frame_buf = SDL_CreateRGBSurface(SDL_HWSURFACE, PVW_W, PVW_H, 24, 0xff, 0xff00, 0xff0000, 0);
-        if (!frame_buf) {
-            fprintf(stderr, "Failed to create frame buffer!\n");
-            goto dead;
-        }
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_NOPARACHUTE) != 0) {
+        fprintf(stderr, "Failed to initialize SDL!\n");
+    }
 
 
-        SDL_EnableUNICODE(1);
+    screen = SDL_SetVideoMode(1920, 480*2, 24, SDL_HWSURFACE | SDL_DOUBLEBUF);
+    if (!screen) {
+        fprintf(stderr, "Failed to set video mode!\n");
+        goto dead;
+    }
 
-        while (!flag) {
-            // Video Output
-            SDL_FillRect(screen, 0, 0);
-            x = TALLY_MARGIN;
-            y = TALLY_MARGIN;
-            text_start_x = 0;
-            for (j = 0; j < n_buffers && j < 4; j++) {
-                if (j == 0 && camera_get( ) >= 4) {
-                    display_cam = camera_get( );
+    frame_buf = SDL_CreateRGBSurface(SDL_HWSURFACE, PVW_W, PVW_H, 24, 0xff, 0xff00, 0xff0000, 0);
+    if (!frame_buf) {
+        fprintf(stderr, "Failed to create frame buffer!\n");
+        goto dead;
+    }
+
+
+    SDL_EnableUNICODE(1);
+
+    while (!flag) {
+        // Video Output
+        SDL_FillRect(screen, 0, 0);
+        x = TALLY_MARGIN;
+        y = TALLY_MARGIN;
+        text_start_x = 0;
+        for (j = 0; j < n_buffers && j < 4; j++) {
+            if (j == 0 && camera_get( ) >= 4) {
+                display_cam = camera_get( );
+            } else {
+                display_cam = j;
+            }
+
+            /* Draw tally indicators */
+            if (display_cam == playout_status.active_source 
+                    && playout_status.valid) {
+                /* red "live" tally */
+                draw_tally(x, y, 255, 0, 0);
+            } else if (display_cam == camera_get( )) {
+                /* green "preview" tally */
+                draw_tally(x, y, 0, 255, 0);
+            }
+
+            /* Draw frames as appropriate for the current mode. */
+            if (display_mode == LIVE || display_mode == PLAYOUT) {
+                int d_timecode;
+
+                if (display_mode == LIVE) {
+                    d_timecode = buffers[display_cam]->get_timecode( ) - 1;
+                } else if (display_mode == PLAYOUT) {
+                    /* playout_status.timecode is relative to camera 1 */
+                    d_timecode = playout_status.timecode
+                        + marks[display_cam]
+                        - marks[0];
+                }
+
+                draw_frame(buffers[display_cam], x, y, 
+                    d_timecode, PICTURE, &sbc); 
+                if (sbc > 60) {
+                    line_of_text(&xt, &yt, "scoreboard: %02d:%02d", 
+                        sbc / 600, (sbc / 10) % 60);
                 } else {
-                    display_cam = j;
+                    line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", 
+                        (sbc / 10) % 60, sbc % 10);
                 }
-
-                /* Draw tally indicators */
-                if (display_cam == playout_status.active_source 
-                        && playout_status.valid) {
-                    /* red "live" tally */
-                    draw_tally(x, y, 255, 0, 0);
-                } else if (display_cam == camera_get( )) {
-                    /* green "preview" tally */
-                    draw_tally(x, y, 0, 255, 0);
-                }
-
-                /* Draw frames as appropriate for the current mode. */
-                if (display_mode == LIVE || display_mode == PLAYOUT) {
-                    int d_timecode;
-
-                    if (display_mode == LIVE) {
-                        d_timecode = buffers[display_cam]->get_timecode( ) - 1;
-                    } else if (display_mode == PLAYOUT) {
-                        /* playout_status.timecode is relative to camera 1 */
-                        d_timecode = playout_status.timecode
-                            + marks[display_cam]
-                            - marks[0];
-                    }
-
-                    draw_frame(buffers[display_cam], x, y, 
-                        d_timecode, PICTURE, &sbc); 
-                    if (sbc > 60) {
-                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", 
-                            sbc / 600, (sbc / 10) % 60);
-                    } else {
-                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", 
-                            (sbc / 10) % 60, sbc % 10);
-                    }
-                } else if (display_mode == LIVE_VECTOR) {
-                    draw_frame(buffers[display_cam], x, y, 
-                        buffers[display_cam]->get_timecode( ) - 1, VECTOR);
-                } else if (display_mode == LIVE_WAVEFORM) {
-                    draw_frame(buffers[display_cam], x, y, 
-                        buffers[display_cam]->get_timecode( ) - 1, WAVEFORM);
-                } else if (display_mode == PREVIEW) {
-                    draw_frame(buffers[display_cam], x, y, 
-                        replay_ptrs[display_cam], PICTURE, &sbc);
-                    if (sbc > 60) {
-                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", 
-                            sbc / 600, (sbc / 10) % 60);
-                    } else {
-                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", 
-                            (sbc / 10) % 60, sbc % 10);
-                    }
-                    replay_ptrs[display_cam] += PVW_FPF;
-                    if (replay_ptrs[display_cam] >= replay_ends[display_cam]) {
-                        display_mode = LIVE;
-                    }
-                } else if (display_mode == SEEK_START) {
-                    draw_frame(buffers[display_cam], x, y, 
-                        marks[display_cam], PICTURE, &sbc);
-                    if (sbc > 60) {
-                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
-                    } else {
-                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
-                    }
-                } else if (display_mode == SEEK_HYPER) {
-                    draw_frame(buffers[display_cam], x, y, 
-                        hypermarks[display_cam], PICTURE, &sbc);
-                    if (sbc > 60) {
-                        line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
-                    } else {
-                        line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
-                    }
-                }
-
-                xt = x;
-                yt = y;
-                line_of_text(&xt, &yt, "CAM %d", display_cam + 1);
-
-                x += frame_buf->w + 2*TALLY_MARGIN;
-                if (x + frame_buf->w > screen->w) {
-                    text_start_x = x;
-                    x = 0;
-                    y += frame_buf->h + 2*TALLY_MARGIN;
-                }
-            }
-
-            if (text_start_x == 0) {
-                text_start_x = x;
-            }
-
-
-            // Try to update the playout information
-            update_playout_status( );
-
-            // x, y points at the top left of the big empty column 
-            // at the right of the screen...
-            x = text_start_x;
-            y = 10;
-
-            if (display_mode == LIVE) {
-                line_of_text(&x, &y, "LIVE PREVIEW");
-                line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
             } else if (display_mode == LIVE_VECTOR) {
-                line_of_text(&x, &y, "LIVE VECTORSCOPE");
-                line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
+                draw_frame(buffers[display_cam], x, y, 
+                    buffers[display_cam]->get_timecode( ) - 1, VECTOR);
             } else if (display_mode == LIVE_WAVEFORM) {
-                line_of_text(&x, &y, "LIVE WAVEFORM");
-                line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
+                draw_frame(buffers[display_cam], x, y, 
+                    buffers[display_cam]->get_timecode( ) - 1, WAVEFORM);
             } else if (display_mode == PREVIEW) {
-                line_of_text(&x, &y, "REPLAY PREVIEW");
-                line_of_text(&x, &y, "%s", timecode_fmt(replay_ptrs[0] - marks[0]));
+                draw_frame(buffers[display_cam], x, y, 
+                    replay_ptrs[display_cam], PICTURE, &sbc);
+                if (sbc > 60) {
+                    line_of_text(&xt, &yt, "scoreboard: %02d:%02d", 
+                        sbc / 600, (sbc / 10) % 60);
+                } else {
+                    line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", 
+                        (sbc / 10) % 60, sbc % 10);
+                }
+                replay_ptrs[display_cam] += PVW_FPF;
+                if (replay_ptrs[display_cam] >= replay_ends[display_cam]) {
+                    display_mode = LIVE;
+                }
             } else if (display_mode == SEEK_START) {
-                line_of_text(&x, &y, "PLAYOUT START FRAME");
-                line_of_text(&x, &y, "");
+                draw_frame(buffers[display_cam], x, y, 
+                    marks[display_cam], PICTURE, &sbc);
+                if (sbc > 60) {
+                    line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                } else {
+                    line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                }
+            } else if (display_mode == SEEK_HYPER) {
+                draw_frame(buffers[display_cam], x, y, 
+                    hypermarks[display_cam], PICTURE, &sbc);
+                if (sbc > 60) {
+                    line_of_text(&xt, &yt, "scoreboard: %02d:%02d", sbc / 600, (sbc / 10) % 60);
+                } else {
+                    line_of_text(&xt, &yt, "scoreboard: :%02d.%02d", (sbc / 10) % 60, sbc % 10);
+                }
             }
-                
-            if (playout_status.valid) {
-                line_of_text(&x, &y, "PLAYOUT: %s", timecode_fmt(playout_status.timecode));
-                line_of_text(
-                    &x, &y, "PLAYOUT SOURCE: [CAM %d%s%s]", 
-                    playout_status.active_source + 1, 
-                    playout_status.clock_on? " CLOCK" : "",
-                    playout_status.dsk_on? " DSK" : ""
-                );
-            } else {
-                line_of_text(&x, &y, "PLAYOUT SERVER NOT RUNNING??");
-                line_of_text(&x, &y, "STATUS UNKNOWN");
+
+            xt = x;
+            yt = y;
+            line_of_text(&xt, &yt, "CAM %d", display_cam + 1);
+
+            x += frame_buf->w + 2*TALLY_MARGIN;
+            if (x + frame_buf->w > screen->w) {
+                text_start_x = x;
+                x = 0;
+                y += frame_buf->h + 2*TALLY_MARGIN;
             }
-
-            //line_of_text(font, &x, &y, "");
-            if (input > 0) {
-                line_of_text(&x, &y, "%d ", input);
-            } else {
-                line_of_text(&x, &y, " ");
-            }
-            line_of_text(&x, &y, "MARK: %s", timecode_fmt(marks[0]));
-            line_of_text(&x, &y, "HYPERMOTION MARK: %s", timecode_fmt(hypermarks[0]));
-            line_of_text(&x, &y, "HYPERMOTION SOURCE: CAM %d", hypermotion_source + 1);
-            line_of_text(&x, &y, "PREROLL:  %s [+qw-, e]", timecode_fmt(preroll));
-            line_of_text(&x, &y, "POSTROLL: %s [+as-, d]", timecode_fmt(postroll));
-            line_of_text(&x, &y, "PLAYOUT SPEED: %d [+zx-, +/*-, c]", qreplay_speed);
-            line_of_text(&x, &y, "PLAYOUT SOURCE: %d [0..9, PgUp]", qreplay_cam + 1);
-            line_of_text(&x, &y, "AUTOTAKE [PgDn]");
-            line_of_text(&x, &y, "AUTOTAKE + REWIND [Alt+PgDn]");
-            draw_message_log(x, y, screen->h - y);
-
-            // Seeking
-            seek_mark_by(mark_seeker.update_and_get_offset( ));
-            seek_hypermark_by(hypermark_seeker.update_and_get_offset( ));
-
-            // Event Processing
-            if (SDL_PollEvent(&evt)) {
-                if (evt.type == SDL_KEYUP) {
-                    switch (evt.key.keysym.sym) {
-                        case SDLK_F5:
-                        case SDLK_F6:
-                            mark_seeker.stop( );
-                            break;
-
-                        case SDLK_COMMA:
-                        case SDLK_PERIOD:
-                            hypermark_seeker.stop( );
-                            break;
-                    }
-                } else if (evt.type == SDL_KEYDOWN) {
-                    switch (evt.key.keysym.sym) {
-                        case SDLK_KP0:
-                        case SDLK_KP1:
-                        case SDLK_KP2:
-                        case SDLK_KP3:
-                        case SDLK_KP4:
-                        case SDLK_KP5:
-                        case SDLK_KP6:
-                        case SDLK_KP7:
-                        case SDLK_KP8:
-                        case SDLK_KP9:
-                            input *= 10;
-                            input += (evt.key.keysym.unicode - L'0');
-                            break;
-
-                        case SDLK_m:
-                            mark( );
-                            save_mark( );
-                            break;
-
-                        case SDLK_g:
-                            set_hypermotion_source(consume_numeric_input( ) - 1);
-                            break;
-
-                        case SDLK_h:
-                            hypermark( );
-                            save_hypermark( );
-                            break;
-
-                        case SDLK_j:
-                            live_cut_to_hypermark( );
-                            break;
-
-                        case SDLK_i:
-                            mark_playout( );
-                            break;
-
-                        case SDLK_KP_PLUS:
-                            mark( );
-                            save_mark( );
-                            cue_playout( );
-                            break;
-
-                        case SDLK_INSERT:
-                        case SDLK_p:
-                            display_mode_preview( );
-                            break;
-
-                        case SDLK_HOME:
-                        case SDLK_l:
-                            display_mode_live( );
-                            break;
-
-                        case SDLK_DELETE:
-                            display_mode_playout( );
-                            break;
-
-                        case SDLK_q:
-                            preroll_up(5);
-                            break;
-                        case SDLK_w:
-                            preroll_down(5);
-                            break;
-
-                        case SDLK_e:
-                            preroll_set(consume_numeric_input( ));
-                            input = 0;
-                            break;
-
-                        case SDLK_a:
-                            postroll_up(5);
-                            break;
-
-                        case SDLK_s:
-                            postroll_down(5);
-                            break;
-
-                        case SDLK_d:
-                            postroll_set(consume_numeric_input( ));
-                            break;
-
-                        case SDLK_z:
-                        case SDLK_KP_DIVIDE:
-                            playout_speed_up(1);
-                            if (!(evt.key.keysym.mod & KMOD_CTRL)) {
-                                playout_speed_live_change( );
-                            }
-                            break;
-
-                        case SDLK_r:
-                            write_file_from_mark( );
-                            break;
-
-                        case SDLK_t:
-                            write_file_from_mark(consume_numeric_input( ));
-                            break;
-
-                        case SDLK_x:
-                        case SDLK_KP_MULTIPLY:
-                            playout_speed_down(1);
-                            if (!(evt.key.keysym.mod & KMOD_CTRL)) {
-                                playout_speed_live_change( );
-                            }
-
-                            break;
-                        case SDLK_c:
-                            playout_speed_set(consume_numeric_input( ));
-                            if (!(evt.key.keysym.mod & KMOD_CTRL)) {
-                                playout_speed_live_change( );
-                            }
-                            break;
-
-                        case SDLK_SPACE:
-                            cue_playout( );
-                            do_playout_cmd(PLAYOUT_CMD_RESUME);
-                            break;
-
-                        case SDLK_KP_ENTER:
-                            cue_playout( );
-                            break;
-
-                        case SDLK_PAGEUP:
-                            camera_set(consume_numeric_input( ));
-                            break;
-
-                        case SDLK_PAGEDOWN:
-                            // if alt key was pushed, do a live cut, but also rewind the clips.
-                            if (evt.key.keysym.mod & KMOD_ALT) {
-                                live_cut_and_rewind(camera_get( ));
-                            } else {
-                                live_cut(camera_get( ));
-                            }
-                            break;
-
-                        case SDLK_END:
-                            /* by default, return from slow-mo on rewind */
-                            if (evt.key.keysym.mod & KMOD_CTRL) {
-                                playout_speed_set(10);   
-                                playout_speed_live_change( );
-                            }
-                            live_cut_and_rewind(camera_get( ));
-                            break;
-
-                        case SDLK_BACKSPACE:
-                            save_mark( );
-                            break;
-
-                        case SDLK_BACKSLASH:
-                            recall_mark(consume_numeric_input( ));
-                            break;
-
-                        case SDLK_1:
-                        case SDLK_2:
-                        case SDLK_3:
-                        case SDLK_4:
-                        case SDLK_5:
-                        case SDLK_6:
-                        case SDLK_7:
-                        case SDLK_8:
-                        case SDLK_9:
-                            camera_set(evt.key.keysym.unicode - L'0');
-                            break;
-
-                        case SDLK_F1:
-                            playout_speed_set(2);
-                            playout_speed_live_change( );
-                            break;
-
-                        case SDLK_F2:
-                            playout_speed_set(5);
-                            playout_speed_live_change( );
-                            break;
-
-                        case SDLK_F3:
-                            playout_speed_set(10);
-                            playout_speed_live_change( );
-                            break;
-
-                        case SDLK_F4:
-                            playout_speed_reverse( );
-                            if (!(evt.key.keysym.mod & KMOD_CTRL)) {
-                                playout_speed_live_change( );
-                            }
-                            break;
-
-                        case SDLK_F5:
-                            mark_seeker.start_back( );
-                            break;
-
-                        case SDLK_F6:
-                            mark_seeker.start_forward( );
-                            break;
-
-
-                        case SDLK_COMMA:
-                            hypermark_seeker.start_back( );
-                            break;
-
-                        case SDLK_PERIOD:
-                            hypermark_seeker.start_forward( );
-                            break;
-
-                        case SDLK_F7:
-                            display_mode_seek_start( );
-                            break;
-
-                        case SDLK_F8:
-                            display_mode_seek_hypermotion( );
-                            break;
-
-                        case SDLK_F9:
-                            do_playout_cmd(PLAYOUT_CMD_PAUSE);
-                            break;
-
-                        case SDLK_F10:
-                            do_playout_cmd(PLAYOUT_CMD_STEP_BACKWARD);
-                            break;
-
-                        case SDLK_F11:
-                            do_playout_cmd(PLAYOUT_CMD_STEP_FORWARD);
-                            break;
-
-                        case SDLK_F12:
-                            do_playout_cmd(PLAYOUT_CMD_RESUME);
-                            break;
-                        
-                        case SDLK_b:
-                            do_playout_cmd(PLAYOUT_CMD_CLOCK_TOGGLE);
-                            break;
-
-                        case SDLK_k:
-                            toggle_dsk(consume_numeric_input( ));
-                            break;
-
-                        case SDLK_ESCAPE:
-                            flag = 1;
-                            break;
-
-                        case SDLK_v: /* Vectorscope */
-                            if (vscope_bg) {
-                                display_mode = LIVE_VECTOR;
-                            }
-                            break;
-
-                        case SDLK_f: /* waveForm monitor */
-                            display_mode = LIVE_WAVEFORM;
-                            break;
-			
-                        /* suppress compiler warning */
-                        default:
-                            break;
-                    }
-                } 
-            }
-            // flip pages
-            SDL_Flip(screen);
         }
+
+        if (text_start_x == 0) {
+            text_start_x = x;
+        }
+
+
+        // Try to update the playout information
+        update_playout_status( );
+
+        // x, y points at the top left of the big empty column 
+        // at the right of the screen...
+        x = text_start_x;
+        y = 10;
+
+        if (display_mode == LIVE) {
+            line_of_text(&x, &y, "LIVE PREVIEW");
+            line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
+        } else if (display_mode == LIVE_VECTOR) {
+            line_of_text(&x, &y, "LIVE VECTORSCOPE");
+            line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
+        } else if (display_mode == LIVE_WAVEFORM) {
+            line_of_text(&x, &y, "LIVE WAVEFORM");
+            line_of_text(&x, &y, "%s", timecode_fmt(buffers[0]->get_timecode( )));
+        } else if (display_mode == PREVIEW) {
+            line_of_text(&x, &y, "REPLAY PREVIEW");
+            line_of_text(&x, &y, "%s", timecode_fmt(replay_ptrs[0] - marks[0]));
+        } else if (display_mode == SEEK_START) {
+            line_of_text(&x, &y, "PLAYOUT START FRAME");
+            line_of_text(&x, &y, "");
+        }
+            
+        if (playout_status.valid) {
+            line_of_text(&x, &y, "PLAYOUT: %s", timecode_fmt(playout_status.timecode));
+            line_of_text(
+                &x, &y, "PLAYOUT SOURCE: [CAM %d%s%s]", 
+                playout_status.active_source + 1, 
+                playout_status.clock_on? " CLOCK" : "",
+                playout_status.dsk_on? " DSK" : ""
+            );
+        } else {
+            line_of_text(&x, &y, "PLAYOUT SERVER NOT RUNNING??");
+            line_of_text(&x, &y, "STATUS UNKNOWN");
+        }
+
+        //line_of_text(font, &x, &y, "");
+        if (input > 0) {
+            line_of_text(&x, &y, "%d ", input);
+        } else {
+            line_of_text(&x, &y, " ");
+        }
+        line_of_text(&x, &y, "MARK: %s", timecode_fmt(marks[0]));
+        line_of_text(&x, &y, "HYPERMOTION MARK: %s", timecode_fmt(hypermarks[0]));
+        line_of_text(&x, &y, "HYPERMOTION SOURCE: CAM %d", hypermotion_source + 1);
+        line_of_text(&x, &y, "PREROLL:  %s [+qw-, e]", timecode_fmt(preroll));
+        line_of_text(&x, &y, "POSTROLL: %s [+as-, d]", timecode_fmt(postroll));
+        line_of_text(&x, &y, "PLAYOUT SPEED: %d [+zx-, +/*-, c]", qreplay_speed);
+        line_of_text(&x, &y, "PLAYOUT SOURCE: %d [0..9, PgUp]", qreplay_cam + 1);
+        line_of_text(&x, &y, "AUTOTAKE [PgDn]");
+        line_of_text(&x, &y, "AUTOTAKE + REWIND [Alt+PgDn]");
+        draw_message_log(x, y, screen->h - y);
+
+        // Seeking
+        seek_mark_by(mark_seeker.update_and_get_offset( ));
+        seek_hypermark_by(hypermark_seeker.update_and_get_offset( ));
+
+        // Event Processing
+        if (SDL_PollEvent(&evt)) {
+            if (evt.type == SDL_KEYUP) {
+                switch (evt.key.keysym.sym) {
+                    case SDLK_F5:
+                    case SDLK_F6:
+                        mark_seeker.stop( );
+                        break;
+
+                    case SDLK_COMMA:
+                    case SDLK_PERIOD:
+                        hypermark_seeker.stop( );
+                        break;
+                }
+            } else if (evt.type == SDL_KEYDOWN) {
+                switch (evt.key.keysym.sym) {
+                    case SDLK_KP0:
+                    case SDLK_KP1:
+                    case SDLK_KP2:
+                    case SDLK_KP3:
+                    case SDLK_KP4:
+                    case SDLK_KP5:
+                    case SDLK_KP6:
+                    case SDLK_KP7:
+                    case SDLK_KP8:
+                    case SDLK_KP9:
+                        input *= 10;
+                        input += (evt.key.keysym.unicode - L'0');
+                        break;
+
+                    case SDLK_m:
+                        mark( );
+                        save_mark( );
+                        break;
+
+                    case SDLK_g:
+                        set_hypermotion_source(consume_numeric_input( ) - 1);
+                        break;
+
+                    case SDLK_h:
+                        hypermark( );
+                        save_hypermark( );
+                        break;
+
+                    case SDLK_j:
+                        live_cut_to_hypermark( );
+                        break;
+
+                    case SDLK_i:
+                        mark_playout( );
+                        break;
+
+                    case SDLK_KP_PLUS:
+                        mark( );
+                        save_mark( );
+                        cue_playout( );
+                        break;
+
+                    case SDLK_INSERT:
+                    case SDLK_p:
+                        display_mode_preview( );
+                        break;
+
+                    case SDLK_HOME:
+                    case SDLK_l:
+                        display_mode_live( );
+                        break;
+
+                    case SDLK_DELETE:
+                        display_mode_playout( );
+                        break;
+
+                    case SDLK_q:
+                        preroll_up(5);
+                        break;
+                    case SDLK_w:
+                        preroll_down(5);
+                        break;
+
+                    case SDLK_e:
+                        preroll_set(consume_numeric_input( ));
+                        input = 0;
+                        break;
+
+                    case SDLK_a:
+                        postroll_up(5);
+                        break;
+
+                    case SDLK_s:
+                        postroll_down(5);
+                        break;
+
+                    case SDLK_d:
+                        postroll_set(consume_numeric_input( ));
+                        break;
+
+                    case SDLK_z:
+                    case SDLK_KP_DIVIDE:
+                        playout_speed_up(1);
+                        if (!(evt.key.keysym.mod & KMOD_CTRL)) {
+                            playout_speed_live_change( );
+                        }
+                        break;
+
+                    case SDLK_r:
+                        write_file_from_mark( );
+                        break;
+
+                    case SDLK_t:
+                        write_file_from_mark(consume_numeric_input( ));
+                        break;
+
+                    case SDLK_x:
+                    case SDLK_KP_MULTIPLY:
+                        playout_speed_down(1);
+                        if (!(evt.key.keysym.mod & KMOD_CTRL)) {
+                            playout_speed_live_change( );
+                        }
+
+                        break;
+                    case SDLK_c:
+                        playout_speed_set(consume_numeric_input( ));
+                        if (!(evt.key.keysym.mod & KMOD_CTRL)) {
+                            playout_speed_live_change( );
+                        }
+                        break;
+
+                    case SDLK_SPACE:
+                        cue_playout( );
+                        do_playout_cmd(PLAYOUT_CMD_RESUME);
+                        break;
+
+                    case SDLK_KP_ENTER:
+                        cue_playout( );
+                        break;
+
+                    case SDLK_PAGEUP:
+                        camera_set(consume_numeric_input( ));
+                        break;
+
+                    case SDLK_PAGEDOWN:
+                        // if alt key was pushed, do a live cut, but also rewind the clips.
+                        if (evt.key.keysym.mod & KMOD_ALT) {
+                            live_cut_and_rewind(camera_get( ));
+                        } else {
+                            live_cut(camera_get( ));
+                        }
+                        break;
+
+                    case SDLK_END:
+                        /* by default, return from slow-mo on rewind */
+                        if (evt.key.keysym.mod & KMOD_CTRL) {
+                            playout_speed_set(10);   
+                            playout_speed_live_change( );
+                        }
+                        live_cut_and_rewind(camera_get( ));
+                        break;
+
+                    case SDLK_BACKSPACE:
+                        save_mark( );
+                        break;
+
+                    case SDLK_BACKSLASH:
+                        recall_mark(consume_numeric_input( ));
+                        break;
+
+                    case SDLK_1:
+                    case SDLK_2:
+                    case SDLK_3:
+                    case SDLK_4:
+                    case SDLK_5:
+                    case SDLK_6:
+                    case SDLK_7:
+                    case SDLK_8:
+                    case SDLK_9:
+                        camera_set(evt.key.keysym.unicode - L'0');
+                        break;
+
+                    case SDLK_F1:
+                        playout_speed_set(2);
+                        playout_speed_live_change( );
+                        break;
+
+                    case SDLK_F2:
+                        playout_speed_set(5);
+                        playout_speed_live_change( );
+                        break;
+
+                    case SDLK_F3:
+                        playout_speed_set(10);
+                        playout_speed_live_change( );
+                        break;
+
+                    case SDLK_F4:
+                        playout_speed_reverse( );
+                        if (!(evt.key.keysym.mod & KMOD_CTRL)) {
+                            playout_speed_live_change( );
+                        }
+                        break;
+
+                    case SDLK_F5:
+                        mark_seeker.start_back( );
+                        break;
+
+                    case SDLK_F6:
+                        mark_seeker.start_forward( );
+                        break;
+
+
+                    case SDLK_COMMA:
+                        hypermark_seeker.start_back( );
+                        break;
+
+                    case SDLK_PERIOD:
+                        hypermark_seeker.start_forward( );
+                        break;
+
+                    case SDLK_F7:
+                        display_mode_seek_start( );
+                        break;
+
+                    case SDLK_F8:
+                        display_mode_seek_hypermotion( );
+                        break;
+
+                    case SDLK_F9:
+                        do_playout_cmd(PLAYOUT_CMD_PAUSE);
+                        break;
+
+                    case SDLK_F10:
+                        do_playout_cmd(PLAYOUT_CMD_STEP_BACKWARD);
+                        break;
+
+                    case SDLK_F11:
+                        do_playout_cmd(PLAYOUT_CMD_STEP_FORWARD);
+                        break;
+
+                    case SDLK_F12:
+                        do_playout_cmd(PLAYOUT_CMD_RESUME);
+                        break;
+                    
+                    case SDLK_b:
+                        do_playout_cmd(PLAYOUT_CMD_CLOCK_TOGGLE);
+                        break;
+
+                    case SDLK_k:
+                        toggle_dsk(consume_numeric_input( ));
+                        break;
+
+                    case SDLK_ESCAPE:
+                        flag = 1;
+                        break;
+
+                    case SDLK_v: /* Vectorscope */
+                        if (vscope_bg) {
+                            display_mode = LIVE_VECTOR;
+                        }
+                        break;
+
+                    case SDLK_f: /* waveForm monitor */
+                        display_mode = LIVE_WAVEFORM;
+                        break;
+                    
+                    /* suppress compiler warning */
+                    default:
+                        break;
+                }
+            } 
+        }
+        // flip pages
+        SDL_Flip(screen);
+    }
         
 dead:
-        SDL_Quit( );
+    SDL_Quit( );
 }
 
