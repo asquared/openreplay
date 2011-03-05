@@ -806,23 +806,6 @@ int consume_numeric_input(void) {
     return temp;
 }
 
-float joy_integrate;
-bool joyseek_enabled;
-void joyseek_begin(void) {
-    joy_integrate = 0;
-}
-
-float joyseek_get(void) {
-    return joy_integrate;
-}
-
-void joyseek_adj(float how_much) {
-    joy_integrate -= how_much;
-}
-
-void joyseek_update(Sint16 axis_value, float speed) {
-    joy_integrate += (axis_value / 32768.0 * speed);
-}
 
 void draw_tally(int x, int y, int r, int g, int b) {
     SDL_Rect rc;
@@ -853,12 +836,10 @@ int main(int argc, char *argv[])
         uint32_t sbc; /* score board clock */
 
         input = 0;
-        joyseek_enabled = false;
 
         memset((void *)&playout_status, 0, sizeof(playout_status));
 
         SDL_Event evt;
-        SDL_Joystick *game_port = 0;
 
         n_decoded = 0;
         last_check = time(NULL);
@@ -906,13 +887,6 @@ int main(int argc, char *argv[])
 
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_NOPARACHUTE) != 0) {
             fprintf(stderr, "Failed to initialize SDL!\n");
-        }
-
-        game_port = SDL_JoystickOpen(0);
-        if (!game_port) {
-            fprintf(stderr, "No joystick found. Auto-control will probably not work.\n");
-        } else {
-            SDL_JoystickEventState(SDL_ENABLE);
         }
 
 
@@ -1022,10 +996,6 @@ int main(int argc, char *argv[])
                 text_start_x = x;
             }
 
-            // update joystick axis
-            if (game_port) {
-                joyseek_update(SDL_JoystickGetAxis(game_port, 2), JOYSTICK_SPEED); // the twisty axis?
-            }
 
             // Try to update the playout information
             update_playout_status( );
@@ -1082,35 +1052,13 @@ int main(int argc, char *argv[])
             line_of_text(&x, &y, "AUTOTAKE + REWIND [Alt+PgDn]");
             draw_message_log(x, y, screen->h - y);
 
-            // Seek with the joystick...
-            if (joyseek_enabled) {
-                if (joyseek_get( ) > 1) {
-                    joyseek_adj(1.0f);
-                    seek_mark_forward( );
-                } else {
-                    joyseek_adj(-1.0f);
-                    seek_mark_back( );
-                }
-            }
+            // Seeking
+            seek_mark_by(mark_seeker.update_and_get_offset( ));
+            seek_hypermark_by(hypermark_seeker.update_and_get_offset( ));
 
             // Event Processing
             if (SDL_PollEvent(&evt)) {
-                if (evt.type == SDL_JOYBUTTONDOWN) {
-                    // map joystick buttons onto actions (or just print stuff)
-                    fprintf(stderr, "joystick %d button %d\n", evt.jbutton.which, evt.jbutton.button);
-                    if (evt.jbutton.button == 2) {
-                        fprintf(stderr, "joystick seek: on");
-                        joyseek_begin( );
-                        joyseek_enabled = true;
-                    } else if (evt.jbutton.button == 7) {
-                        fprintf(stderr, "tally input activated - playing");
-                        do_playout_cmd(PLAYOUT_CMD_RESUME);
-                    }
-                } else if (evt.type == SDL_JOYBUTTONUP) {
-                    if (evt.jbutton.button == 2) {
-                        joyseek_enabled = false;
-                    }
-                } else if (evt.type == SDL_KEYDOWN) {
+               if (evt.type == SDL_KEYDOWN) {
                     switch (evt.key.keysym.sym) {
                         case SDLK_KP0:
                         case SDLK_KP1:
