@@ -942,10 +942,10 @@ int main(int argc, char *argv[])
             fprintf(stderr, "Could not load vectorscope graticule image. Vectorscope not available\n");
         }
 
-	if (argc < 2) {
-		fprintf(stderr, "usage: %s buffer_file ...\n", argv[0]);
-		return 1;
-	}
+        if (argc < 2) {
+            fprintf(stderr, "usage: %s buffer_file ...\n", argv[0]);
+            return 1;
+        }
 
         n_buffers = argc - 1;
         buffers = (MmapBuffer **)malloc(n_buffers * sizeof(MmapBuffer *));
@@ -1395,7 +1395,7 @@ int main(int argc, char *argv[])
                             break;
 
                         case SDLK_ESCAPE:
-            			    flag = 1;
+                            flag = 1;
                             break;
 
                         case SDLK_v: /* Vectorscope */
