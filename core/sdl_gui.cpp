@@ -610,8 +610,7 @@ void live_cut_to_hypermark(void) {
     struct playout_command cmd;
     cmd.cmd = PLAYOUT_CMD_CUE_AND_GO;
     cmd.source = hypermotion_source;
-    qreplay_speed = 10; /* really ugly hack */
-    cmd.new_speed = qreplay_speed/10.0f;
+    cmd.new_speed = 10;
 
     for (j = 0; j < n_buffers; ++j) {
         cmd.marks[j] = hypermarks[j];
